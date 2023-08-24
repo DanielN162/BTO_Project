@@ -97,6 +97,10 @@ typedef struct {
 translated_rtn_t *translated_rtn;
 int translated_rtn_num = 0;
 
+/* ============================================================= */
+/* Profiling variables                                        */
+/* ============================================================= */
+
 std::map<ADDRINT, UINT64> seen_map; // iteration count
 std::map<ADDRINT, UINT64> invoked_map; // loop was executed (not related to iterations)
 std::map<ADDRINT, UINT64> last_map; // number of iterations in the previous iteration for loop (diffCount)
@@ -710,11 +714,12 @@ int fix_instructions_displacements()
 /*****************************************/
 int find_candidate_rtns_for_translation(IMG img)
 {
+    /*
     ifstream prof_file;
     prof_file.open("loop-count.csv");
     if (!prof_file) {
-	cerr << "failed to open profiling data file" << endl;
-	return 0;
+		cerr << "failed to open profiling data file" << endl;
+		return 0;
     }
 
     int rc;
@@ -724,17 +729,18 @@ int find_candidate_rtns_for_translation(IMG img)
 
     // go over loop profiling data until we've found 10 different routines
     while(hot_rtn_map.size() < NUM_HOT_ROUTINES) {
-	for (int i = 0; i < 7; i++) { // keep reading line until reaching routine address
-	    getline(prof_file, line, ',');
-	}
-	hot_rtn_addr = AddrintFromString(line);
-	// cout << hot_rtn_addr << endl;
-	hot_rtn_map[hot_rtn_addr] = 1; // mark routine as hot
-	getline(prof_file, line); // advance until end of line
-	if (!prof_file) { // reached end of file
-	    break;
-	}
+		for (int i = 0; i < 7; i++) { // keep reading line until reaching routine address
+	    	getline(prof_file, line, ',');
+		}
+		hot_rtn_addr = AddrintFromString(line);
+		// cout << hot_rtn_addr << endl;
+		hot_rtn_map[hot_rtn_addr] = 1; // mark routine as hot
+		getline(prof_file, line); // advance until end of line
+		if (!prof_file) { // reached end of file
+	    	break;
+		}
     }
+    */
 
 	// go over routines and check if they are candidates for translation and mark them for translation:
 
@@ -752,10 +758,12 @@ int find_candidate_rtns_for_translation(IMG img)
 		}
 
 		hot_rtn_addr = RTN_Address(rtn);
+		/*
 		if (!hot_rtn_map[hot_rtn_addr]) {
 		  // cerr << "Routine not hot: " << RTN_Name(rtn) << endl;
 		  continue;
 		} 
+		*/
 
 		translated_rtn[translated_rtn_num].rtn_addr = hot_rtn_addr;		
 		translated_rtn[translated_rtn_num].rtn_size = RTN_Size(rtn);
