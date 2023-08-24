@@ -98,23 +98,23 @@ translated_rtn_t *translated_rtn;
 int translated_rtn_num = 0;
 
 /* ============================================================= */
-/* Profiling variables                                        */
+/* Profiling variables - OUR ADDITIONS!                                       */
 /* ============================================================= */
 
-std::map<ADDRINT, UINT64> seen_map; // iteration count
-std::map<ADDRINT, UINT64> invoked_map; // loop was executed (not related to iterations)
-std::map<ADDRINT, UINT64> last_map; // number of iterations in the previous iteration for loop (diffCount)
-std::map<ADDRINT, UINT64> curr_map; // number of iteration in the current iteration for loop (diffCount)
-std::map<ADDRINT, UINT64> diff_map; // also for diffCOunt
+// std::map<ADDRINT, UINT64> seen_map; // iteration count
+// std::map<ADDRINT, UINT64> invoked_map; // loop was executed (not related to iterations)
+// std::map<ADDRINT, UINT64> last_map; // number of iterations in the previous iteration for loop (diffCount)
+// std::map<ADDRINT, UINT64> curr_map; // number of iteration in the current iteration for loop (diffCount)
+// std::map<ADDRINT, UINT64> diff_map; // also for diffCOunt
 
-//std::map<ADDRINT, std::vector<UINT64>> iterations_map;
+// //std::map<ADDRINT, std::vector<UINT64>> iterations_map;
 
-std::map<ADDRINT, std::string> rtn_name_map; // rtn to name
-std::map<ADDRINT, UINT64> rtn_ins_map; // rtn to ins count in rtn
-std::map<ADDRINT, UINT64> rtn_count_map; // rtn to call count for rtn
-std::map<ADDRINT, ADDRINT> rtn_addr_map; // rtn to rtn address
+// std::map<ADDRINT, std::string> rtn_name_map; // rtn to name
+// std::map<ADDRINT, UINT64> rtn_ins_map; // rtn to ins count in rtn
+// std::map<ADDRINT, UINT64> rtn_count_map; // rtn to call count for rtn
+// std::map<ADDRINT, ADDRINT> rtn_addr_map; // rtn to rtn address
 
-const int NUM_HOT_ROUTINES = 10;
+// const int NUM_HOT_ROUTINES = 10;
 
 /* ============================================================= */
 /* Service dump routines                                         */
@@ -714,33 +714,31 @@ int fix_instructions_displacements()
 /*****************************************/
 int find_candidate_rtns_for_translation(IMG img)
 {
-    /*
-    ifstream prof_file;
-    prof_file.open("loop-count.csv");
-    if (!prof_file) {
-		cerr << "failed to open profiling data file" << endl;
-		return 0;
-    }
+    // ifstream prof_file;
+    // prof_file.open("loop-count.csv");
+    // if (!prof_file) {
+	// 	cerr << "failed to open profiling data file" << endl;
+	// 	return 0;
+    // }
 
     int rc;
-    string line;
-    ADDRINT hot_rtn_addr;
-    std::map<ADDRINT, UINT64> hot_rtn_map;
+    // string line;
+    // ADDRINT hot_rtn_addr;
+    // std::map<ADDRINT, UINT64> hot_rtn_map;
 
-    // go over loop profiling data until we've found 10 different routines
-    while(hot_rtn_map.size() < NUM_HOT_ROUTINES) {
-		for (int i = 0; i < 7; i++) { // keep reading line until reaching routine address
-	    	getline(prof_file, line, ',');
-		}
-		hot_rtn_addr = AddrintFromString(line);
-		// cout << hot_rtn_addr << endl;
-		hot_rtn_map[hot_rtn_addr] = 1; // mark routine as hot
-		getline(prof_file, line); // advance until end of line
-		if (!prof_file) { // reached end of file
-	    	break;
-		}
-    }
-    */
+    // // go over loop profiling data until we've found 10 different routines
+    // while(hot_rtn_map.size() < NUM_HOT_ROUTINES) {
+	// 	for (int i = 0; i < 7; i++) { // keep reading line until reaching routine address
+	//     	getline(prof_file, line, ',');
+	// 	}
+	// 	hot_rtn_addr = AddrintFromString(line);
+	// 	// cout << hot_rtn_addr << endl;
+	// 	hot_rtn_map[hot_rtn_addr] = 1; // mark routine as hot
+	// 	getline(prof_file, line); // advance until end of line
+	// 	if (!prof_file) { // reached end of file
+	//     	break;
+	// 	}
+    // }
 
 	// go over routines and check if they are candidates for translation and mark them for translation:
 
@@ -752,26 +750,25 @@ int find_candidate_rtns_for_translation(IMG img)
         for (RTN rtn = SEC_RtnHead(sec); RTN_Valid(rtn); rtn = RTN_Next(rtn))
         {	
 
-		if (rtn == RTN_Invalid()) {
-		  cerr << "Warning: invalid routine " << RTN_Name(rtn) << endl;
-		  continue;
-		}
+			if (rtn == RTN_Invalid()) {
+			  cerr << "Warning: invalid routine " << RTN_Name(rtn) << endl;
+  			  continue;
+			}
 
-		hot_rtn_addr = RTN_Address(rtn);
-		/*
-		if (!hot_rtn_map[hot_rtn_addr]) {
-		  // cerr << "Routine not hot: " << RTN_Name(rtn) << endl;
-		  continue;
-		} 
-		*/
+			// hot_rtn_addr = RTN_Address(rtn);
+			// if (!hot_rtn_map[hot_rtn_addr]) {
+			// // cerr << "Routine not hot: " << RTN_Name(rtn) << endl;
+			// continue;
+			// } 
 
-		translated_rtn[translated_rtn_num].rtn_addr = hot_rtn_addr;		
-		translated_rtn[translated_rtn_num].rtn_size = RTN_Size(rtn);
-		translated_rtn[translated_rtn_num].instr_map_entry = num_of_instr_map_entries;
-		translated_rtn[translated_rtn_num].isSafeForReplacedProbe = true;	
+			// translated_rtn[translated_rtn_num].rtn_addr = hot_rtn_addr;		
+			translated_rtn[translated_rtn_num].rtn_addr = RTN_Address(rtn);			
+			translated_rtn[translated_rtn_num].rtn_size = RTN_Size(rtn);
+			translated_rtn[translated_rtn_num].instr_map_entry = num_of_instr_map_entries;
+			translated_rtn[translated_rtn_num].isSafeForReplacedProbe = true;	
 
-		// Open the RTN.
-		RTN_Open( rtn );             
+			// Open the RTN.
+			RTN_Open( rtn );              
 
             for (INS ins = RTN_InsHead(rtn); INS_Valid(ins); ins = INS_Next(ins)) {
 
@@ -796,12 +793,85 @@ int find_candidate_rtns_for_translation(IMG img)
 					break;
 				}
 
-				// Add instr into instr map:
-				rc = add_new_instr_entry(&xedd, INS_Address(ins), INS_Size(ins));
-				if (rc < 0) {
-					cerr << "ERROR: failed during instructon translation." << endl;
-					translated_rtn[translated_rtn_num].instr_map_entry = -1;
-					break;
+				// If ins is call to hot function, emit the function body to the TC.
+				// Otherwise, emit the original ins (call) to the TC;
+			   	// Gadi skeleton for inlining
+				if (INS_IsDirectCall(ins)) { // TODO: check if hot call
+					ADDRINT callee_addr = INS_DirectControlFlowTargetAddress(ins);
+					RTN rtn_callee = RTN_FindByAddress(callee_addr);
+					RTN_Close(rtn);
+					RTN_Open(rtn_callee);
+					cerr << "\ninside callee rtn area: " << RTN_Name(rtn_callee) << "\n ";
+
+					vector<xed_decoded_inst_t> callee_insts_decoded;
+					vector<INS> callee_insts;
+					for (INS ins = RTN_InsHead(rtn_callee); INS_Valid(ins); ins = INS_Next(ins)) {
+						cerr << " callee ins addr: " << INS_Disassemble(ins) << "\n";
+						// TODO: special case for ret commands
+						// TODO: error raised - what if translated code of a function calls / jumps inside the function? causes jump from translated to orig, requires special handling
+						xed_decoded_inst_t xedd;
+						xed_error_enum_t xed_code;							
+						xed_decoded_inst_zero_set_mode(&xedd,&dstate); 
+
+						xed_code = xed_decode(&xedd, reinterpret_cast<UINT8*>(INS_Address(ins)), max_inst_len);
+						if (xed_code != XED_ERROR_NONE) {
+							cerr << "ERROR: xed decode failed" << endl;
+							translated_rtn[translated_rtn_num].instr_map_entry = -1;
+							break;
+						}
+						else {
+							callee_insts_decoded.push_back(xedd);
+							callee_insts.push_back(ins);
+						}
+					}
+					
+					for (unsigned int i = 0; i < callee_insts.size(); i++) {
+						xed_decoded_inst_t xedd = callee_insts_decoded[i];
+						rc = add_new_instr_entry(&xedd, INS_Address(callee_insts[i]), INS_Size(callee_insts[i]));
+						if (rc < 0) {
+							cerr << "ERROR: failed during instructon translation." << endl;
+							translated_rtn[translated_rtn_num].instr_map_entry = -1;
+							break;
+						}
+					}
+					/*
+					for (INS ins = RTN_InsHead(rtn_callee); INS_Valid(ins); ins = INS_Next(ins)) {
+						if (INS_IsRet(ins)) {
+							continue;
+						}
+						cerr << " callee ins addr: " << INS_Disassemble(ins) << "\n";
+						// TODO: special case for ret commands
+						xed_decoded_inst_t xedd;
+						xed_error_enum_t xed_code;							
+						xed_decoded_inst_zero_set_mode(&xedd,&dstate); 
+
+						xed_code = xed_decode(&xedd, reinterpret_cast<UINT8*>(INS_Address(ins)), max_inst_len);
+						if (xed_code != XED_ERROR_NONE) {
+							cerr << "ERROR: xed decode failed" << endl;
+							translated_rtn[translated_rtn_num].instr_map_entry = -1;
+							break;
+						}
+
+						rc = add_new_instr_entry(&xedd, INS_Address(ins), INS_Size(ins));
+						if (rc < 0) {
+							cerr << "ERROR: failed during instructon translation." << endl;
+							translated_rtn[translated_rtn_num].instr_map_entry = -1;
+							break;
+						}
+					}
+					*/
+					RTN_Close(rtn_callee);
+					RTN_Open( rtn );
+				}
+
+				else {
+					// Add instr into instr map:
+					rc = add_new_instr_entry(&xedd, INS_Address(ins), INS_Size(ins));
+					if (rc < 0) {
+						cerr << "ERROR: failed during instructon translation." << endl;
+						translated_rtn[translated_rtn_num].instr_map_entry = -1;
+						break;
+					}
 				}
                 
                 // Example of adding a second consecutive nop instruction into the TC:
@@ -1051,152 +1121,155 @@ VOID ImageLoad(IMG img, VOID *v)
 }
 
 /* ===================================================================== */
+/* OUR ADDITIONS														 */
+/* ===================================================================== */
 
-// count iterations for loop
-VOID docount_seen(ADDRINT target_addr, INT32 taken) { 
-    if (taken) {
-	seen_map[target_addr]++;
-	curr_map[target_addr]++;
-    }
-}
+// // count iterations for loop
+// VOID docount_seen(ADDRINT target_addr, INT32 taken) { 
+//     if (taken) {
+// 	seen_map[target_addr]++;
+// 	curr_map[target_addr]++;
+//     }
+// }
 
-// count invocations (ignore iterations) and update diffs, for two different types of loops
-// runs when we EXIT an invocation (prepares vector for the next one)
-VOID docount_invoked(ADDRINT target_addr) { 
-    invoked_map[target_addr]++;
+// // count invocations (ignore iterations) and update diffs, for two different types of loops
+// // runs when we EXIT an invocation (prepares vector for the next one)
+// VOID docount_invoked(ADDRINT target_addr) { 
+//     invoked_map[target_addr]++;
     
-    if (last_map[target_addr] != 0) {
-	diff_map[target_addr] += (last_map[target_addr] != curr_map[target_addr]);
-    }
-    last_map[target_addr] = curr_map[target_addr];
-    curr_map[target_addr] = 0;
-}
+//     if (last_map[target_addr] != 0) {
+// 	diff_map[target_addr] += (last_map[target_addr] != curr_map[target_addr]);
+//     }
+//     last_map[target_addr] = curr_map[target_addr];
+//     curr_map[target_addr] = 0;
+// }
 
-VOID docount_invoked2(ADDRINT target_addr, INT32 taken) { 
-    if (taken) {
-	invoked_map[target_addr]++;
-        if (last_map[target_addr] != 0) {
-	    diff_map[target_addr] += (last_map[target_addr] != curr_map[target_addr]);
-        }
-        last_map[target_addr] = curr_map[target_addr];
-        curr_map[target_addr] = 0;
-    }
-}
+// VOID docount_invoked2(ADDRINT target_addr, INT32 taken) { 
+//     if (taken) {
+// 	invoked_map[target_addr]++;
+//         if (last_map[target_addr] != 0) {
+// 	    diff_map[target_addr] += (last_map[target_addr] != curr_map[target_addr]);
+//         }
+//         last_map[target_addr] = curr_map[target_addr];
+//         curr_map[target_addr] = 0;
+//     }
+// }
 
-// count instructions in rtn
-VOID docount(ADDRINT rtn_addr) { rtn_ins_map[rtn_addr]++; }
+// // count instructions in rtn
+// VOID docount(ADDRINT rtn_addr) { rtn_ins_map[rtn_addr]++; }
 
-// count calls to rtn
-VOID docount_rtn(ADDRINT rtn_addr) { rtn_count_map[rtn_addr]++; }
+// // count calls to rtn
+// VOID docount_rtn(ADDRINT rtn_addr) { rtn_count_map[rtn_addr]++; }
 
 /* ===================================================================== */
 
 VOID Instruction(INS ins, VOID* v) {
-    RTN rtn = INS_Rtn(ins);
-    ADDRINT rtn_addr = RTN_Address(rtn);
+    // RTN rtn = INS_Rtn(ins);
+    // ADDRINT rtn_addr = RTN_Address(rtn);
 
-    // skip routines outside of MainExecutable image
-    IMG img = IMG_FindByAddress(rtn_addr);
-    if (!IMG_Valid(img) || !IMG_IsMainExecutable(img)) {
-	return;
-    }
+    // // skip routines outside of MainExecutable image
+    // IMG img = IMG_FindByAddress(rtn_addr);
+    // if (!IMG_Valid(img) || !IMG_IsMainExecutable(img)) {
+	// return;
+    // }
 
-    INS_InsertCall( // count instructions in routine
-	ins, IPOINT_BEFORE,
-        (AFUNPTR)docount,
-        IARG_FAST_ANALYSIS_CALL,
-        IARG_ADDRINT, rtn_addr,
-        IARG_END
-    );
+    // INS_InsertCall( // count instructions in routine
+	// ins, IPOINT_BEFORE,
+    //     (AFUNPTR)docount,
+    //     IARG_FAST_ANALYSIS_CALL,
+    //     IARG_ADDRINT, rtn_addr,
+    //     IARG_END
+    // );
 
-    if (INS_IsDirectCall(ins)) {
-	ADDRINT target_addr = INS_DirectControlFlowTargetAddress(ins); // address of the routine
-	INS_InsertCall( // count number of calls to routine
-	    ins, IPOINT_BEFORE,
-            (AFUNPTR)docount_rtn,
-            IARG_FAST_ANALYSIS_CALL,
-            IARG_ADDRINT, target_addr,
-            IARG_END
-	);
-    }
+    // if (INS_IsDirectCall(ins)) {
+	// ADDRINT target_addr = INS_DirectControlFlowTargetAddress(ins); // address of the routine
+	// INS_InsertCall( // count number of calls to routine
+	//     ins, IPOINT_BEFORE,
+    //         (AFUNPTR)docount_rtn,
+    //         IARG_FAST_ANALYSIS_CALL,
+    //         IARG_ADDRINT, target_addr,
+    //         IARG_END
+	// );
+    // }
 
-    if (INS_IsDirectBranch(ins)) { // if ins is a jump command (conditional/unconditional)
-        ADDRINT target_addr = INS_DirectControlFlowTargetAddress(ins); // address of the jump target (head of loop?)
-	ADDRINT curr_addr = INS_Address(ins);
-        if (target_addr < curr_addr) { // jumps backwards - found a loop
-	    // add to number of iterations for current loop (identified by the target addr)
-	    INS_InsertCall(
-		ins, IPOINT_BEFORE,
-            	(AFUNPTR)docount_seen,
-            	IARG_FAST_ANALYSIS_CALL,
-            	IARG_ADDRINT, target_addr,
-            	IARG_BRANCH_TAKEN,
-            	IARG_END
-	    );
+    // if (INS_IsDirectBranch(ins)) { // if ins is a jump command (conditional/unconditional)
+    //     ADDRINT target_addr = INS_DirectControlFlowTargetAddress(ins); // address of the jump target (head of loop?)
+	// ADDRINT curr_addr = INS_Address(ins);
+    //     if (target_addr < curr_addr) { // jumps backwards - found a loop
+	//     // add to number of iterations for current loop (identified by the target addr)
+	//     INS_InsertCall(
+	// 	ins, IPOINT_BEFORE,
+    //         	(AFUNPTR)docount_seen,
+    //         	IARG_FAST_ANALYSIS_CALL,
+    //         	IARG_ADDRINT, target_addr,
+    //         	IARG_BRANCH_TAKEN,
+    //         	IARG_END
+	//     );
 
-	    // get name of rtn that contains the loop
-            if (RTN_Valid(rtn) && rtn_name_map[rtn_addr] == "") { // if name of rtn was not found yet, update it in name map
-                rtn_name_map[rtn_addr] = RTN_Name(rtn); // update name of rtn that contains the loop
-            }
+	//     // get name of rtn that contains the loop
+    //         if (RTN_Valid(rtn) && rtn_name_map[rtn_addr] == "") { // if name of rtn was not found yet, update it in name map
+    //             rtn_name_map[rtn_addr] = RTN_Name(rtn); // update name of rtn that contains the loop
+    //         }
 
-	    // get address of rtn that contains the loop
-            rtn_addr_map[target_addr] = rtn_addr;
+	//     // get address of rtn that contains the loop
+    //         rtn_addr_map[target_addr] = rtn_addr;
 
 	    
-            if (INS_IsValidForIpointAfter(ins)) { // if current ins is conditional jmp, then after it the loop is over - inc invoked
-                INS_InsertCall(ins, IPOINT_AFTER,
-                    (AFUNPTR)docount_invoked,
-                    IARG_FAST_ANALYSIS_CALL,
-                    IARG_ADDRINT, target_addr,
-                    IARG_END);
-            }
+    //         if (INS_IsValidForIpointAfter(ins)) { // if current ins is conditional jmp, then after it the loop is over - inc invoked
+    //             INS_InsertCall(ins, IPOINT_AFTER,
+    //                 (AFUNPTR)docount_invoked,
+    //                 IARG_FAST_ANALYSIS_CALL,
+    //                 IARG_ADDRINT, target_addr,
+    //                 IARG_END);
+    //         }
 
-            else {
-		RTN_Open(rtn);
-                for(INS ins2 = RTN_InsHead(rtn); INS_Valid(ins2); ins2 = INS_Next(ins2)) {
-                    if (INS_Address(ins2) >= target_addr && INS_Address(ins2) < curr_addr
-                        && INS_IsDirectBranch(ins2) && INS_DirectControlFlowTargetAddress(ins2) > curr_addr) { //find branches inside the loop
-                        INS_InsertCall(ins2, IPOINT_BEFORE,
-                            (AFUNPTR)docount_invoked2,
-                            IARG_FAST_ANALYSIS_CALL,
-                            IARG_ADDRINT, target_addr,
-                            IARG_BRANCH_TAKEN,
-                            IARG_END);
-                    }
-                }
-		RTN_Close(rtn);
-            }
-        }
-    }
+    //         else {
+	// 	RTN_Open(rtn);
+    //             for(INS ins2 = RTN_InsHead(rtn); INS_Valid(ins2); ins2 = INS_Next(ins2)) {
+    //                 if (INS_Address(ins2) >= target_addr && INS_Address(ins2) < curr_addr
+    //                     && INS_IsDirectBranch(ins2) && INS_DirectControlFlowTargetAddress(ins2) > curr_addr) { //find branches inside the loop
+    //                     INS_InsertCall(ins2, IPOINT_BEFORE,
+    //                         (AFUNPTR)docount_invoked2,
+    //                         IARG_FAST_ANALYSIS_CALL,
+    //                         IARG_ADDRINT, target_addr,
+    //                         IARG_BRANCH_TAKEN,
+    //                         IARG_END);
+    //                 }
+    //             }
+	// 	RTN_Close(rtn);
+    //         }
+    //     }
+    // }
 }
 
 /* ===================================================================== */
 
 VOID Fini(INT32 code, VOID* v) {
-	std::vector<std::pair<ADDRINT, UINT64>> vector_ins(seen_map.begin(), seen_map.end()); // loop target address -> #iterations map
-	std::sort(vector_ins.begin(), vector_ins.end(),
-           [](const auto & lhs, const auto & rhs)
-           { return rtn_ins_map[rtn_addr_map[lhs.first]] > rtn_ins_map[rtn_addr_map[rhs.first]]; }
-	); // sort by routine instruction number - hottest routines first
+	// std::vector<std::pair<ADDRINT, UINT64>> vector_ins(seen_map.begin(), seen_map.end()); // loop target address -> #iterations map
+	// std::sort(vector_ins.begin(), vector_ins.end(),
+    //        [](const auto & lhs, const auto & rhs)
+    //        { return rtn_ins_map[rtn_addr_map[lhs.first]] > rtn_ins_map[rtn_addr_map[rhs.first]]; }
+	// ); // sort by routine instruction number - hottest routines first
 
-	std::ofstream myfile;
-        myfile.open("loop-count.csv");
-	for (const auto & item : vector_ins) { // for each loop target address
-	    if (item.second > 0) { // if loop was seen (at least one iteration)
-		if (invoked_map[item.first] == 0) { // deal with -1/+1 errors
-		    invoked_map[item.first]++;
-		}
-		//0x<loop target address>, <count seen>
-	        myfile << "0x" << std::hex << item.first << std::dec << ',' << item.second << ',';
-		// <count invoked>, <mean taken>, <diff count>
-	        myfile << invoked_map[item.first] << ',' << (item.second / invoked_map[item.first]) << ',' << diff_map[item.first] << ',';
-	        // <rtn name>, 0x<rtn addr>
-		myfile << rtn_name_map[rtn_addr_map[item.first]] << ", 0x" << std::hex << rtn_addr_map[item.first] << std::dec << ',';
-		// <ins count for rtn>, <rtn num of calls> \n	        
-		myfile << rtn_ins_map[rtn_addr_map[item.first]] << ',' << rtn_count_map[rtn_addr_map[item.first]] << std::endl;
-	    }
-	}
-	myfile.close();	
+	// std::ofstream myfile;
+    //     myfile.open("loop-count.csv");
+	// for (const auto & item : vector_ins) { // for each loop target address
+	//     if (item.second > 0) { // if loop was seen (at least one iteration)
+	// 	if (invoked_map[item.first] == 0) { // deal with -1/+1 errors
+	// 	    invoked_map[item.first]++;
+	// 	}
+	// 	//0x<loop target address>, <count seen>
+	//         myfile << "0x" << std::hex << item.first << std::dec << ',' << item.second << ',';
+	// 	// <count invoked>, <mean taken>, <diff count>
+	//         myfile << invoked_map[item.first] << ',' << (item.second / invoked_map[item.first]) << ',' << diff_map[item.first] << ',';
+	//         // <rtn name>, 0x<rtn addr>
+	// 	myfile << rtn_name_map[rtn_addr_map[item.first]] << ", 0x" << std::hex << rtn_addr_map[item.first] << std::dec << ',';
+	// 	// <ins count for rtn>, <rtn num of calls> \n	        
+	// 	myfile << rtn_ins_map[rtn_addr_map[item.first]] << ',' << rtn_count_map[rtn_addr_map[item.first]] << std::endl;
+	//     }
+	// }
+	// myfile.close();	
+	std::cout << "Reached FINI!" << std::endl;
 }
 
 
@@ -1229,7 +1302,7 @@ int main(int argc, char* argv[])
 
     bool prof = KnobProf.Value();
     bool opt = KnobOpt.Value();
-    if (prof && inst) {
+    if (prof && opt) {
 	return Usage();
     }
 
