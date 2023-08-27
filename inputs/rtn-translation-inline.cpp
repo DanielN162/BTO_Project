@@ -1,13 +1,53 @@
+/*########################################################################################################*/
+// cd /nfs/iil/ptl/bt/ghaber1/pin/pin-2.10-45467-gcc.3.4.6-ia32_intel64-linux/source/tools/SimpleExamples
+// make
+//  ../../../pin -t obj-intel64/rtn-translation.so -- ~/workdir/tst
+/*########################################################################################################*/
+/*BEGIN_LEGAL 
+Intel Open Source License 
+
+Copyright (c) 2002-2011 Intel Corporation. All rights reserved.
+ 
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are
+met:
+
+Redistributions of source code must retain the above copyright notice,
+this list of conditions and the following disclaimer.  Redistributions
+in binary form must reproduce the above copyright notice, this list of
+conditions and the following disclaimer in the documentation and/or
+other materials provided with the distribution.  Neither the name of
+the Intel Corporation nor the names of its contributors may be used to
+endorse or promote products derived from this software without
+specific prior written permission.
+ 
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE INTEL OR
+ITS CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+END_LEGAL */
+/* ===================================================================== */
+
+/* ===================================================================== */
+/*! @file
+ * This probe pintool generates translated code of routines, places them in an allocated TC 
+ * and patches the orginal code to jump to the translated routines.
+ */
+
 #include "pin.H"
 extern "C" {
 #include "xed-interface.h"
 }
 #include <iostream>
-#include <fstream>
-#include <map>
-#include <vector>
-#include <string>
 #include <iomanip>
+#include <fstream>
 #include <sys/mman.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -23,14 +63,9 @@ extern "C" {
 
 using namespace std;
 
-/* ===================================================================== */
-/* Commandline Switches */
-/* ===================================================================== */
-
-KNOB<BOOL> KnobProf(KNOB_MODE_WRITEONCE, "pintool", "prof", "0", "profiling mode");
-
-KNOB<BOOL> KnobOpt(KNOB_MODE_WRITEONCE, "pintool", "opt", "0", "translation mode");
-
+/*======================================================================*/
+/* commandline switches                                                 */
+/*======================================================================*/
 KNOB<BOOL>   KnobVerbose(KNOB_MODE_WRITEONCE,    "pintool",
     "verbose", "0", "Verbose run");
 
@@ -40,9 +75,12 @@ KNOB<BOOL>   KnobDumpTranslatedCode(KNOB_MODE_WRITEONCE,    "pintool",
 KNOB<BOOL>   KnobDoNotCommitTranslatedCode(KNOB_MODE_WRITEONCE,    "pintool",
     "no_tc_commit", "0", "Do not commit translated code");
 
+
+
 /* ===================================================================== */
 /* Global Variables */
 /* ===================================================================== */
+std::ofstream* out = 0;
 
 // For XED:
 #if defined(TARGET_IA32E)
@@ -97,24 +135,7 @@ typedef struct {
 translated_rtn_t *translated_rtn;
 int translated_rtn_num = 0;
 
-/* ============================================================= */
-/* Profiling variables - OUR ADDITIONS!                                       */
-/* ============================================================= */
 
-// std::map<ADDRINT, UINT64> seen_map; // iteration count
-// std::map<ADDRINT, UINT64> invoked_map; // loop was executed (not related to iterations)
-// std::map<ADDRINT, UINT64> last_map; // number of iterations in the previous iteration for loop (diffCount)
-// std::map<ADDRINT, UINT64> curr_map; // number of iteration in the current iteration for loop (diffCount)
-// std::map<ADDRINT, UINT64> diff_map; // also for diffCOunt
-
-// //std::map<ADDRINT, std::vector<UINT64>> iterations_map;
-
-// std::map<ADDRINT, std::string> rtn_name_map; // rtn to name
-// std::map<ADDRINT, UINT64> rtn_ins_map; // rtn to ins count in rtn
-// std::map<ADDRINT, UINT64> rtn_count_map; // rtn to call count for rtn
-// std::map<ADDRINT, ADDRINT> rtn_addr_map; // rtn to rtn address
-
-// const int NUM_HOT_ROUTINES = 10;
 
 /* ============================================================= */
 /* Service dump routines                                         */
@@ -274,7 +295,7 @@ void dump_tc()
 /*************************/
 /* add_new_instr_entry() */
 /*************************/
-int add_new_instr_entry(xed_decoded_inst_t *xedd, ADDRINT pc, unsigned int size, uint32_t extra_disp = 0)
+int add_new_instr_entry(xed_decoded_inst_t *xedd, ADDRINT pc, unsigned int size)
 {
 
 	// copy orig instr to instr map:
@@ -287,25 +308,15 @@ int add_new_instr_entry(xed_decoded_inst_t *xedd, ADDRINT pc, unsigned int size,
 
     xed_uint_t disp_byts = xed_decoded_inst_get_branch_displacement_width(xedd);
 	
-	xed_int32_t disp = 0;
+	xed_int32_t disp;
 
     if (disp_byts > 0) { // there is a branch offset.
-		cerr << "old offset: " << disp << endl;
       disp = xed_decoded_inst_get_branch_displacement(xedd);
-	//   cerr << "Expected disp is " << disp << endl;
 	  orig_targ_addr = pc + xed_decoded_inst_get_length (xedd) + disp;	
-	//   cerr << "new target: " << hex << pc << " + " << xed_decoded_inst_get_length (xedd) << " + " << disp << " = " << orig_targ_addr <<  endl;
 	}
-
-	// Change encoding if added extra disp (only after calculating orig_targ_addr)
-	// TODO: might change the last parameter from 4 to something else			
 
 	// Converts the decoder request to a valid encoder request:
 	xed_encoder_request_init_from_decode (xedd);
-	if (disp_byts > 0) {
-				cerr << "new offset: " << disp + extra_disp << endl;
-		xed_encoder_request_set_branch_displacement (xedd, disp + extra_disp, 4);
-	}
 
     unsigned int new_size = 0;
 	
@@ -338,9 +349,8 @@ int add_new_instr_entry(xed_decoded_inst_t *xedd, ADDRINT pc, unsigned int size,
 
     // debug print new encoded instr:
 	if (KnobVerbose) {
-		// cerr << "    new instr:";
-		// dump_instr_from_mem((ADDRINT *)instr_map[num_of_instr_map_entries-1].encoded_ins, instr_map[num_of_instr_map_entries-1].new_ins_addr);
-		dump_instr_map_entry(num_of_instr_map_entries-1);
+		cerr << "    new instr:";
+		dump_instr_from_mem((ADDRINT *)instr_map[num_of_instr_map_entries-1].encoded_ins, instr_map[num_of_instr_map_entries-1].new_ins_addr);
 	}
 
 	return new_size;
@@ -368,9 +378,6 @@ int chain_all_direct_br_and_call_target_entries()
             if (instr_map[j].orig_ins_addr == instr_map[i].orig_targ_addr) {
                 instr_map[i].hasNewTargAddr = true; 
 	            instr_map[i].targ_map_entry = j;
-				
-				cerr << "Changed target entry: 0x" << hex << instr_map[i].new_ins_addr << ": " << instr_map[i].targ_map_entry << endl;
-
                 break;
 			}
 		}
@@ -728,31 +735,7 @@ int fix_instructions_displacements()
 /*****************************************/
 int find_candidate_rtns_for_translation(IMG img)
 {
-    // ifstream prof_file;
-    // prof_file.open("loop-count.csv");
-    // if (!prof_file) {
-	// 	cerr << "failed to open profiling data file" << endl;
-	// 	return 0;
-    // }
-
     int rc;
-    // string line;
-    // ADDRINT hot_rtn_addr;
-    // std::map<ADDRINT, UINT64> hot_rtn_map;
-
-    // // go over loop profiling data until we've found 10 different routines
-    // while(hot_rtn_map.size() < NUM_HOT_ROUTINES) {
-	// 	for (int i = 0; i < 7; i++) { // keep reading line until reaching routine address
-	//     	getline(prof_file, line, ',');
-	// 	}
-	// 	hot_rtn_addr = AddrintFromString(line);
-	// 	// cout << hot_rtn_addr << endl;
-	// 	hot_rtn_map[hot_rtn_addr] = 1; // mark routine as hot
-	// 	getline(prof_file, line); // advance until end of line
-	// 	if (!prof_file) { // reached end of file
-	//     	break;
-	// 	}
-    // }
 
 	// go over routines and check if they are candidates for translation and mark them for translation:
 
@@ -769,74 +752,32 @@ int find_candidate_rtns_for_translation(IMG img)
   			  continue;
 			}
 
-			// hot_rtn_addr = RTN_Address(rtn);
-			// if (!hot_rtn_map[hot_rtn_addr]) {
-			// // cerr << "Routine not hot: " << RTN_Name(rtn) << endl;
-			// continue;
-			// } 
-
-			// translated_rtn[translated_rtn_num].rtn_addr = hot_rtn_addr;		
 			translated_rtn[translated_rtn_num].rtn_addr = RTN_Address(rtn);			
 			translated_rtn[translated_rtn_num].rtn_size = RTN_Size(rtn);
 			translated_rtn[translated_rtn_num].instr_map_entry = num_of_instr_map_entries;
 			translated_rtn[translated_rtn_num].isSafeForReplacedProbe = true;	
 
 			// Open the RTN.
-			RTN_Open( rtn );              
+			RTN_Open( rtn );            
+            ADDRINT caller_addr = 0;
+            
+            for (INS ins = RTN_InsHead(rtn); INS_Valid(ins); ins = INS_Next(ins)) {
 
-			// debug print of routine name:
-			if (KnobVerbose) {
-				cerr <<   "\nrtn name: " << RTN_Name(rtn) << " : " << dec << translated_rtn_num << endl;
-			}			
-
-			// First pass: for each called function, find its size and its call size
-			ADDRINT caller_addr = 0;
-			vector<pair<ADDRINT, uint32_t>> hot_calls_addr_and_size; // (address of hot call, total size of inline)
-			for (INS ins = RTN_InsHead(rtn); INS_Valid(ins); ins = INS_Next(ins)) {
-				// Decode the instruction
-				ADDRINT addr = INS_Address(ins);	
-				// Check if we need to skip a caller_addr to an inlined function
-                if (caller_addr >= addr)
-                   continue;
-
-				if (INS_IsDirectCall(ins)) { // TODO: check if hot call
-					caller_addr = addr;
-					// Get address of called routine
-					ADDRINT callee_addr = INS_DirectControlFlowTargetAddress(ins);
-					RTN rtn_callee = RTN_FindByAddress(callee_addr);
-					RTN_Close(rtn);
-					RTN_Open(rtn_callee);
-					cerr << "Found a hot call to routine: " << RTN_Name(rtn_callee) << endl;
-
-					// Get size of called function // TODO: what if the called functions includes inlines as well?
-					hot_calls_addr_and_size.push_back(make_pair(addr, RTN_Size(rtn_callee)));
-
-					RTN_Close(rtn_callee);
-					RTN_Open( rtn );
-					ins = RTN_InsHead(rtn);
-					continue;
-				}
-			}
-
-			// Check first pass
-			for (auto pair : hot_calls_addr_and_size) {
-				cerr << "hot call addr: 0x" << hex << pair.first << dec << ", size (in bytes): " << pair.second << endl;
-			}
-
-			cerr << "Start translation!" << endl;
-
-			// Second pass
-			caller_addr = 0;
-			for (INS ins = RTN_InsHead(rtn); INS_Valid(ins); ins = INS_Next(ins)) {
 				ADDRINT addr = INS_Address(ins);
                 // Check if we need to skip a caller_addr to an inlined function
                 if (caller_addr >= addr)
                    continue;
-
-				// Decode the instruction
-				xed_decoded_inst_t xedd;
-				xed_error_enum_t xed_code;							
-				
+                
+    			//debug print of orig instruction:
+				if (KnobVerbose) {
+ 					cerr << "old instr: ";
+					cerr << "0x" << hex << INS_Address(ins) << ": " << INS_Disassemble(ins) <<  endl;
+					//xed_print_hex_line(reinterpret_cast<UINT8*>(INS_Address (ins)), INS_Size(ins));				   			
+				}				
+                			
+			    xed_decoded_inst_t xedd;
+			    xed_error_enum_t xed_code;							
+	            
 				xed_decoded_inst_zero_set_mode(&xedd,&dstate); 
 
 				xed_code = xed_decode(&xedd, reinterpret_cast<UINT8*>(addr), max_inst_len);
@@ -846,258 +787,97 @@ int find_candidate_rtns_for_translation(IMG img)
 					break;
 				}
 
-				uint32_t extra_offset = 0;
-
-				// Fix displacements for problematic jmp
-				if (INS_IsDirectBranch(ins)) {
-					// Target of branch, without considering inlining...
-					ADDRINT orig_branch_target_addr = INS_DirectControlFlowTargetAddress(ins);
-					for (auto pair : hot_calls_addr_and_size) {
-						uint32_t inline_size = pair.second;
-						ADDRINT call_addr = pair.first;
-						// cerr << "concerning the call in address 0x" << hex << call_addr << dec << endl;
-						if (call_addr > addr && call_addr < orig_branch_target_addr) {
-							// cerr << "Calc offset: add inline size " << inline_size << ", sub call size " << pair.second.first << endl;
-							// TODO: check if it is always 5 (size of hot call instruction)
-							extra_offset += inline_size; // exclude the original hot call, as it will be removed and replaced with inline
-							// cerr << "New EXTRA offset is " << extra_offset << endl;
-						}
-					}
-
-					// Change encoding of branch command so that it has the extra offset
-					// TODO: might change the last parameter from 4 to something else			
-					// cerr << "disp before: " << old_disp << endl;
-					// cerr << "disp after adding " << extra_offset << ": " << xed_decoded_inst_get_branch_displacement(&xedd) << endl;
-					cerr << "for jump command " << INS_Disassemble(ins) << ", increase by " << extra_offset << endl;
+				// Add instr into instr map:
+				rc = add_new_instr_entry(&xedd, INS_Address(ins), INS_Size(ins));
+				if (rc < 0) {
+					cerr << "ERROR: failed during instructon translation." << endl;
+					translated_rtn[translated_rtn_num].instr_map_entry = -1;
+					break;
 				}
 
-				// TODO: check if hot call and not just call
-                // If hot call, do inline
+                // Skeleton of function inlining:
                 if (INS_IsDirectCall (ins)) {
                     caller_addr = addr;
                     ADDRINT callee_addr = INS_DirectControlFlowTargetAddress(ins);
                     RTN rtn_callee = RTN_FindByAddress(callee_addr);
-
-					// Emit a NOP command with the size of the original call command
-					xed_decoded_inst_t xedd_nop;
-					xed_error_enum_t xed_code_nop;							
-					xed_decoded_inst_zero_set_mode(&xedd_nop,&dstate); 
-
-					UINT8 nop_arr[1] = { 0x90 };
-					xed_code_nop = xed_decode(&xedd_nop, nop_arr, max_inst_len);
-					if (xed_code_nop != XED_ERROR_NONE) {
-						cerr << "ERROR: failed decode nop";
-						translated_rtn[translated_rtn_num].instr_map_entry = -1;
-						break;
-					}
-					rc = add_new_instr_entry(&xedd_nop, INS_Address(ins), 1);
-					if (rc < 0) {
-							cerr << "ERROR: failed during instructon translation." << endl;
-							translated_rtn[translated_rtn_num].instr_map_entry = -1;
-							break;
-					}
-
                     RTN_Close( rtn );
                     RTN_Open(rtn_callee);
-
-					// Start the inline itself
-					cerr << "Start inlining function " << RTN_Name(rtn_callee) << endl;
-					// Inlining the function
-                    for (INS ins_callee = RTN_InsHead(rtn_callee); INS_Valid(ins_callee); ins_callee = INS_Next(ins_callee)) {
-						// TODO: special case for ret
-						// cerr << "  callee inst: ";
-						// cerr << "0x" << hex << INS_Address(ins_callee) << ": " << INS_Disassemble(ins_callee) <<  endl;
-						ADDRINT ins_callee_addr = INS_Address(ins_callee);
-
-						xed_decoded_inst_t xedd_calle;
-						xed_error_enum_t xed_code_calle;							
-						
-						xed_decoded_inst_zero_set_mode(&xedd_calle,&dstate); 
-
-						xed_code_calle = xed_decode(&xedd_calle, reinterpret_cast<UINT8*>(ins_callee_addr), max_inst_len);
-						if (xed_code_calle != XED_ERROR_NONE) {
-							cerr << "ERROR: xed decode failed for instr at: " << "0x" << hex << ins_callee_addr << endl;
-							translated_rtn[translated_rtn_num].instr_map_entry = -1;
-							break;
-						}
-
-						// Add instr into instr map:
-						rc = add_new_instr_entry(&xedd_calle, INS_Address(ins_callee), INS_Size(ins_callee));
-						if (rc < 0) {
-							cerr << "ERROR: failed during instructon translation." << endl;
-							translated_rtn[translated_rtn_num].instr_map_entry = -1;
-							break;
-						}
+                    for (INS ins = RTN_InsHead(rtn_callee); INS_Valid(ins); ins = INS_Next(ins)) {
+                       cerr << "  callee inst: ";
+                       cerr << "0x" << hex << INS_Address(ins) << ": " << INS_Disassemble(ins) <<  endl;
                     }
-					cerr << "Done inlining function " << RTN_Name(rtn_callee) << endl;
                     RTN_Close(rtn_callee);
                     RTN_Open( rtn );
                     ins = RTN_InsHead(rtn);
                     continue;
-                }      
+                }                
+                               
+                /*
+                * // Example of adding a jump to a following additional nop instruction
+                * // into the TC:
+                * if (INS_IsNop(ins)) {
+                *   // Create a temporary NOP instruction as a placeholder and then modify 
+                *   // it to a jump instruction.
+				*   rc = add_new_instr_entry(&xedd, INS_Address(ins), INS_Size(ins));
+				*   if (rc < 0) {
+				*     cerr << "ERROR: failed during instructon translation." << endl;
+				*     translated_rtn[translated_rtn_num].instr_map_entry = -1;
+				*     break;
+				*   }
+                *   
+                *   // Create an unconditional jump instruction:
+                *   xed_encoder_instruction_t  enc_instr;
+                *   xed_inst1(&enc_instr, dstate, 
+			    *             XED_ICLASS_JMP, 64,
+                *             xed_relbr (0, 32));
+                *   
+                *   xed_encoder_request_t enc_req;
+                *   xed_encoder_request_zero_set_mode(&enc_req, &dstate);
+                *   xed_bool_t convert_ok = xed_convert_to_encoder_request(&enc_req, &enc_instr);
+                *   if (!convert_ok) {
+                *   	cerr << "conversion to encode request failed" << endl;
+                *   	return -1;
+                *   }
+                * 
+                *   unsigned int ilen = XED_MAX_INSTRUCTION_BYTES;
+                *   unsigned int olen = 0;
+                *   xed_error_enum_t xed_error = xed_encode(&enc_req, 
+                *             reinterpret_cast<UINT8*>(instr_map[num_of_instr_map_entries-1].encoded_ins), ilen, &olen);
+                *   if (xed_error != XED_ERROR_NONE) {
+                *   	cerr << "ENCODE ERROR: " << xed_error_enum_t2str(xed_error) << endl;
+                *     return -1;
+                *   }
+                *   instr_map[num_of_instr_map_entries-1].orig_targ_addr = INS_Address(ins) + olen;
+                * 
+                *   // Create another NOP instruction.
+				*   rc = add_new_instr_entry(&xedd, INS_Address(ins) + olen, INS_Size(ins));
+				*   if (rc < 0) {
+				*     cerr << "ERROR: failed during instructon translation." << endl;
+				*     translated_rtn[translated_rtn_num].instr_map_entry = -1;
+				*     break;
+				*   }
+                * }
+                */
+                
+                
+                
+			} // end for INS...
 
-				else {
-					// Add instr into instr map:
-					rc = add_new_instr_entry(&xedd, INS_Address(ins), INS_Size(ins), extra_offset);
-					if (rc < 0) {
-						cerr << "ERROR: failed during instructon translation." << endl;
-						translated_rtn[translated_rtn_num].instr_map_entry = -1;
-						break;
-					}
-				} // end for INS...
-			}
-			// Close the RTN.
-			RTN_Close( rtn );
 
-			translated_rtn_num++;
+			// debug print of routine name:
+			if (KnobVerbose) {
+				cerr <<   "rtn name: " << RTN_Name(rtn) << " : " << dec << translated_rtn_num << endl;
+			}			
 
-			/*
-			// First pass over insts: for each "hot call", save the call address and number of commands in this called function
-			vector<pair<ADDRINT, pair<uint32_t, uint32_t>>> hot_calls_addr_and_size; // (address of hot call, size of hot call inst, total size of inline)
-			for (INS ins = RTN_InsHead(rtn); INS_Valid(ins); ins = INS_Next(ins)) {
-				// Decode the instruction
-				ADDRINT addr = INS_Address(ins);	
-				// TODO: check if the xedd part is needed here
-			    xed_decoded_inst_t xedd;
-			    xed_error_enum_t xed_code;							
-				xed_decoded_inst_zero_set_mode(&xedd,&dstate); 
-
-				xed_code = xed_decode(&xedd, reinterpret_cast<UINT8*>(addr), max_inst_len);
-				if (xed_code != XED_ERROR_NONE) {
-					cerr << "ERROR: xed decode failed for instr at: " << "0x" << hex << addr << endl;
-					translated_rtn[translated_rtn_num].instr_map_entry = -1;
-					break;
-				}
-
-				if (INS_IsDirectCall(ins)) { // TODO: check if hot call
-					// Get address of called routine
-					ADDRINT callee_addr = INS_DirectControlFlowTargetAddress(ins);
-					RTN rtn_callee = RTN_FindByAddress(callee_addr);
-					RTN_Close(rtn);
-					RTN_Open(rtn_callee);
-					uint32_t call_size = INS_Size(ins);
-					cerr << "Found a hot call to routine: " << RTN_Name(rtn_callee) << ", size of call is " << call_size << endl;
-
-					// Get size of called function // TODO: what if the called functions includes inlines as well?
-					// uint32_t num_of_inst = RTN_NumIns(rtn_callee);
-					uint32_t total_inst_size = 0;
-					for (INS ins2 = RTN_InsHead(rtn_callee); INS_Valid(ins2); ins2 = INS_Next(ins2)) {
-						total_inst_size += xedd._decoded_length;
-					}
-					hot_calls_addr_,and_size.push_back(make_pair(addr, make_pair(call_size, total_inst_size)));
-
-					RTN_Close(rtn_callee);
-					RTN_Open( rtn );
-				}
-			}
-
-			// Check first pass
-			for (auto pair : hot_calls_addr_and_size) {
-				cerr << "hot call addr: 0x" << hex << pair.first << dec << ", size of call: " << pair.second.first << ", size (in bytes): " << pair.second.second << endl;
-			}
-
-			cerr << "Start translation!" << endl;
-			// Second pass over insts: for each direct branch (cond/uncond), fix displacement in command
-			// for each "hot call" found in first pass, replace with inline called function
-			for (INS ins = RTN_InsHead(rtn); INS_Valid(ins); ins = INS_Next(ins)) {
-				// Decode the instruction
-				ADDRINT ins_addr = INS_Address(ins);	
-			    xed_decoded_inst_t xedd;
-			    xed_error_enum_t xed_code;							
-				xed_decoded_inst_zero_set_mode(&xedd,&dstate); 
-
-				xed_code = xed_decode(&xedd, reinterpret_cast<UINT8*>(ins_addr), max_inst_len);
-				if (xed_code != XED_ERROR_NONE) {
-					cerr << "ERROR: xed decode failed for instr at: " << "0x" << hex << ins_addr << endl;
-					translated_rtn[translated_rtn_num].instr_map_entry = -1;
-					break;
-				}
-
-				// Fix displacements for problematic jmp
-				if (INS_IsDirectBranch(ins)) {
-					// Target of branch, without considering inlining...
-					ADDRINT orig_branch_target_addr = INS_DirectControlFlowTargetAddress(ins);
-					uint32_t extra_offset = 0;
-					for (auto pair : hot_calls_addr_and_size) {
-						uint32_t inline_size = pair.second.second;
-						ADDRINT call_addr = pair.first;
-						// cerr << "concerning the call in address 0x" << hex << call_addr << dec << endl;
-						if (call_addr > ins_addr && call_addr < orig_branch_target_addr) {
-							// cerr << "Calc offset: add inline size " << inline_size << ", sub call size " << pair.second.first << endl;
-							extra_offset += inline_size - pair.second.first; // exclude the original hot call, as it will be removed and replaced with inline
-							// cerr << "New EXTRA offset is " << extra_offset << endl;
-						}
-					}
-
-					// TODO: REMOVE THIS IS REALLY STUPID DEBUGGING
-					// if (extra_offset == 62) {
-					// 	extra_offset = 60;
-					// }
-
-					// Change encoding of branch command so that it has the extra offset
-					// TODO: might change the last parameter from 4 to something else			
-					xed_int32_t old_disp = xed_decoded_inst_get_branch_displacement(&xedd);
-					// cerr << "disp before: " << old_disp << endl;
-					xed_encoder_request_init_from_decode (&xedd);
-					xed_encoder_request_set_branch_displacement (&xedd, old_disp + extra_offset, 4);
-					// cerr << "disp after adding " << extra_offset << ": " << xed_decoded_inst_get_branch_displacement(&xedd) << endl;
-					cerr << "for jump command " << INS_Disassemble(ins) << ", orig branch target is 0x" << hex << orig_branch_target_addr << dec << ", increase by " << extra_offset << " to get 0x" << hex << orig_branch_target_addr + extra_offset << dec << endl;
-				}
-
-				// Emit the commands / inline
-				if (INS_IsDirectCall(ins)) { // TODO: connect it to the vector above so that we filter non-hot calls
-					ADDRINT callee_addr = INS_DirectControlFlowTargetAddress(ins);
-					RTN rtn_callee = RTN_FindByAddress(callee_addr);
-					RTN_Close(rtn);
-					RTN_Open(rtn_callee);
-					cerr << "Start inline function " << RTN_Name(rtn_callee) << endl;
-
-					// Finds decodings for all commands in inlined function
-					for (INS ins = RTN_InsHead(rtn_callee); INS_Valid(ins); ins = INS_Next(ins)) {
-						// TODO: special case for ret commands
-						// TODO: error raised - what if translated code of a function calls / jumps inside the function? causes jump from translated to orig, requires special handling
-						xed_decoded_inst_t xedd;
-						xed_error_enum_t xed_code;
-						xed_decoded_inst_zero_set_mode(&xedd,&dstate);
-
-						xed_code = xed_decode(&xedd, reinterpret_cast<UINT8*>(INS_Address(ins)), max_inst_len);
-						if (xed_code != XED_ERROR_NONE) {
-							cerr << "ERROR: xed decode failed" << endl;
-							translated_rtn[translated_rtn_num].instr_map_entry = -1;
-							break;
-						}
-
-						rc = add_new_instr_entry(&xedd, INS_Address(ins), INS_Size(ins));
-						if (rc < 0) {
-							cerr << "ERROR: failed during instructon translation." << endl;
-							translated_rtn[translated_rtn_num].instr_map_entry = -1;
-							break;
-						}
-					}
-					cerr << "Finished inline function " << RTN_Name(rtn_callee) << endl;
-
-					RTN_Close(rtn_callee);
-					RTN_Open( rtn );
-				}					
-
-				else { // If not hot call, just emit the encoded instruction (maybe with changes)
-					// Add instr into instr map:
-					rc = add_new_instr_entry(&xedd, INS_Address(ins), INS_Size(ins));
-					if (rc < 0) {
-						cerr << "ERROR: failed during instructon translation." << endl;
-						translated_rtn[translated_rtn_num].instr_map_entry = -1;
-						break;
-					}
-				}
-			}
 
 			// Close the RTN.
 			RTN_Close( rtn );
 
 			translated_rtn_num++;
-			*/
-		} // end for RTN..
+
+		 } // end for RTN..
 	} // end for SEC...
+
 
 	return 0;
 }
@@ -1316,207 +1096,41 @@ VOID ImageLoad(IMG img, VOID *v)
     }
 }
 
-/* ===================================================================== */
-/* OUR ADDITIONS														 */
-/* ===================================================================== */
-
-// // count iterations for loop
-// VOID docount_seen(ADDRINT target_addr, INT32 taken) { 
-//     if (taken) {
-// 	seen_map[target_addr]++;
-// 	curr_map[target_addr]++;
-//     }
-// }
-
-// // count invocations (ignore iterations) and update diffs, for two different types of loops
-// // runs when we EXIT an invocation (prepares vector for the next one)
-// VOID docount_invoked(ADDRINT target_addr) { 
-//     invoked_map[target_addr]++;
-    
-//     if (last_map[target_addr] != 0) {
-// 	diff_map[target_addr] += (last_map[target_addr] != curr_map[target_addr]);
-//     }
-//     last_map[target_addr] = curr_map[target_addr];
-//     curr_map[target_addr] = 0;
-// }
-
-// VOID docount_invoked2(ADDRINT target_addr, INT32 taken) { 
-//     if (taken) {
-// 	invoked_map[target_addr]++;
-//         if (last_map[target_addr] != 0) {
-// 	    diff_map[target_addr] += (last_map[target_addr] != curr_map[target_addr]);
-//         }
-//         last_map[target_addr] = curr_map[target_addr];
-//         curr_map[target_addr] = 0;
-//     }
-// }
-
-// // count instructions in rtn
-// VOID docount(ADDRINT rtn_addr) { rtn_ins_map[rtn_addr]++; }
-
-// // count calls to rtn
-// VOID docount_rtn(ADDRINT rtn_addr) { rtn_count_map[rtn_addr]++; }
-
-/* ===================================================================== */
-
-VOID Instruction(INS ins, VOID* v) {
-    // RTN rtn = INS_Rtn(ins);
-    // ADDRINT rtn_addr = RTN_Address(rtn);
-
-    // // skip routines outside of MainExecutable image
-    // IMG img = IMG_FindByAddress(rtn_addr);
-    // if (!IMG_Valid(img) || !IMG_IsMainExecutable(img)) {
-	// return;
-    // }
-
-    // INS_InsertCall( // count instructions in routine
-	// ins, IPOINT_BEFORE,
-    //     (AFUNPTR)docount,
-    //     IARG_FAST_ANALYSIS_CALL,
-    //     IARG_ADDRINT, rtn_addr,
-    //     IARG_END
-    // );
-
-    // if (INS_IsDirectCall(ins)) {
-	// ADDRINT target_addr = INS_DirectControlFlowTargetAddress(ins); // address of the routine
-	// INS_InsertCall( // count number of calls to routine
-	//     ins, IPOINT_BEFORE,
-    //         (AFUNPTR)docount_rtn,
-    //         IARG_FAST_ANALYSIS_CALL,
-    //         IARG_ADDRINT, target_addr,
-    //         IARG_END
-	// );
-    // }
-
-    // if (INS_IsDirectBranch(ins)) { // if ins is a jump command (conditional/unconditional)
-    //     ADDRINT target_addr = INS_DirectControlFlowTargetAddress(ins); // address of the jump target (head of loop?)
-	// ADDRINT curr_addr = INS_Address(ins);
-    //     if (target_addr < curr_addr) { // jumps backwards - found a loop
-	//     // add to number of iterations for current loop (identified by the target addr)
-	//     INS_InsertCall(
-	// 	ins, IPOINT_BEFORE,
-    //         	(AFUNPTR)docount_seen,
-    //         	IARG_FAST_ANALYSIS_CALL,
-    //         	IARG_ADDRINT, target_addr,
-    //         	IARG_BRANCH_TAKEN,
-    //         	IARG_END
-	//     );
-
-	//     // get name of rtn that contains the loop
-    //         if (RTN_Valid(rtn) && rtn_name_map[rtn_addr] == "") { // if name of rtn was not found yet, update it in name map
-    //             rtn_name_map[rtn_addr] = RTN_Name(rtn); // update name of rtn that contains the loop
-    //         }
-
-	//     // get address of rtn that contains the loop
-    //         rtn_addr_map[target_addr] = rtn_addr;
-
-	    
-    //         if (INS_IsValidForIpointAfter(ins)) { // if current ins is conditional jmp, then after it the loop is over - inc invoked
-    //             INS_InsertCall(ins, IPOINT_AFTER,
-    //                 (AFUNPTR)docount_invoked,
-    //                 IARG_FAST_ANALYSIS_CALL,
-    //                 IARG_ADDRINT, target_addr,
-    //                 IARG_END);
-    //         }
-
-    //         else {
-	// 	RTN_Open(rtn);
-    //             for(INS ins2 = RTN_InsHead(rtn); INS_Valid(ins2); ins2 = INS_Next(ins2)) {
-    //                 if (INS_Address(ins2) >= target_addr && INS_Address(ins2) < curr_addr
-    //                     && INS_IsDirectBranch(ins2) && INS_DirectControlFlowTargetAddress(ins2) > curr_addr) { //find branches inside the loop
-    //                     INS_InsertCall(ins2, IPOINT_BEFORE,
-    //                         (AFUNPTR)docount_invoked2,
-    //                         IARG_FAST_ANALYSIS_CALL,
-    //                         IARG_ADDRINT, target_addr,
-    //                         IARG_BRANCH_TAKEN,
-    //                         IARG_END);
-    //                 }
-    //             }
-	// 	RTN_Close(rtn);
-    //         }
-    //     }
-    // }
-}
-
-/* ===================================================================== */
-
-VOID Fini(INT32 code, VOID* v) {
-	// std::vector<std::pair<ADDRINT, UINT64>> vector_ins(seen_map.begin(), seen_map.end()); // loop target address -> #iterations map
-	// std::sort(vector_ins.begin(), vector_ins.end(),
-    //        [](const auto & lhs, const auto & rhs)
-    //        { return rtn_ins_map[rtn_addr_map[lhs.first]] > rtn_ins_map[rtn_addr_map[rhs.first]]; }
-	// ); // sort by routine instruction number - hottest routines first
-
-	// std::ofstream myfile;
-    //     myfile.open("loop-count.csv");
-	// for (const auto & item : vector_ins) { // for each loop target address
-	//     if (item.second > 0) { // if loop was seen (at least one iteration)
-	// 	if (invoked_map[item.first] == 0) { // deal with -1/+1 errors
-	// 	    invoked_map[item.first]++;
-	// 	}
-	// 	//0x<loop target address>, <count seen>
-	//         myfile << "0x" << std::hex << item.first << std::dec << ',' << item.second << ',';
-	// 	// <count invoked>, <mean taken>, <diff count>
-	//         myfile << invoked_map[item.first] << ',' << (item.second / invoked_map[item.first]) << ',' << diff_map[item.first] << ',';
-	//         // <rtn name>, 0x<rtn addr>
-	// 	myfile << rtn_name_map[rtn_addr_map[item.first]] << ", 0x" << std::hex << rtn_addr_map[item.first] << std::dec << ',';
-	// 	// <ins count for rtn>, <rtn num of calls> \n	        
-	// 	myfile << rtn_ins_map[rtn_addr_map[item.first]] << ',' << rtn_count_map[rtn_addr_map[item.first]] << std::endl;
-	//     }
-	// }
-	// myfile.close();	
-	std::cout << "Reached FINI!" << std::endl;
-}
 
 
 /* ===================================================================== */
-
+/* Print Help Message                                                    */
+/* ===================================================================== */
 INT32 Usage()
 {
-    std::cerr << "This tool prints out the number of dynamic instructions executed in each routine.\n"
-            "\n";
-
-    std::cerr << KNOB_BASE::StringKnobSummary();
-
-    std::cerr << std::endl;
-
+    cerr << "This tool translated routines of an Intel(R) 64 binary"
+         << endl;
+    cerr << KNOB_BASE::StringKnobSummary();
+    cerr << endl;
     return -1;
 }
+
 
 /* ===================================================================== */
 /* Main                                                                  */
 /* ===================================================================== */
 
-int main(int argc, char* argv[])
+int main(int argc, char * argv[])
 {
-    if (PIN_Init(argc, argv))
-    {
+
+    // Initialize pin & symbol manager
+    //out = new std::ofstream("xed-print.out");
+
+    if( PIN_Init(argc,argv) )
         return Usage();
-    }
 
     PIN_InitSymbols();
 
-    bool prof = KnobProf.Value();
-    bool opt = KnobOpt.Value();
-    if (prof && opt) {
-	return Usage();
-    }
-
-    if (prof) {
-	INS_AddInstrumentFunction(Instruction, 0);
-    	PIN_AddFiniFunction(Fini, 0);
-
-    	// Never returns
-    	PIN_StartProgram();
-    }
-
-    if (opt) {
 	// Register ImageLoad
 	IMG_AddInstrumentFunction(ImageLoad, 0);
 
-	// Start the program, never returns
-	PIN_StartProgramProbed();
-    }
+    // Start the program, never returns
+    PIN_StartProgramProbed();
 
     return 0;
 }
@@ -1524,3 +1138,4 @@ int main(int argc, char* argv[])
 /* ===================================================================== */
 /* eof */
 /* ===================================================================== */
+
