@@ -75,9 +75,6 @@ typedef struct {
 	xed_category_enum_t category_enum;
 	unsigned int size;
 	int targ_map_entry;
-
-	// added by us
-	pair<int, int> context; // if (-1,-1) then context is 
 } instr_map_t;
 
 
@@ -188,10 +185,11 @@ void dump_entire_instr_map()
 				if (rtn == RTN_Invalid()) {
 					cerr << "Unknwon"  << ":" << endl;
 				} else {
-				  cerr << RTN_Name(rtn) << ":" << endl;
+				  cerr << "\n" << RTN_Name(rtn) << ":" << endl;
 				}
 			}
 		}
+		cerr << "    ";
 		dump_instr_from_mem ((ADDRINT *)instr_map[i].new_ins_addr, instr_map[i].new_ins_addr);		
 	}
 }
@@ -256,71 +254,68 @@ void dump_tc()
 /* Translation routines                                         */
 /* ============================================================= */
 
-
 /*************************/
 /* add_new_instr_entry() */
 /*************************/
 int add_new_instr_entry(xed_decoded_inst_t *xedd, ADDRINT pc, unsigned int size)
 {
 
-	// copy orig instr to instr map:
+    // copy orig instr to instr map:
     ADDRINT orig_targ_addr = 0;
 
-	if (xed_decoded_inst_get_length (xedd) != size) {
-		cerr << "Invalid instruction decoding" << endl;
-		return -1;
-	}
+    if (xed_decoded_inst_get_length (xedd) != size) {
+        cerr << "Invalid instruction decoding" << endl;
+        return -1;
+    }
 
     xed_uint_t disp_byts = xed_decoded_inst_get_branch_displacement_width(xedd);
-	
-	xed_int32_t disp;
+    
+    xed_int32_t disp;
 
     if (disp_byts > 0) { // there is a branch offset.
       disp = xed_decoded_inst_get_branch_displacement(xedd);
-	  orig_targ_addr = pc + xed_decoded_inst_get_length (xedd) + disp;	
-	}
+      orig_targ_addr = pc + xed_decoded_inst_get_length (xedd) + disp;    
+    }
 
-	// Converts the decoder request to a valid encoder request:
-	xed_encoder_request_init_from_decode (xedd);
+    // Converts the decoder request to a valid encoder request:
+    xed_encoder_request_init_from_decode (xedd);
 
     unsigned int new_size = 0;
-	
-	xed_error_enum_t xed_error = xed_encode (xedd, reinterpret_cast<UINT8*>(instr_map[num_of_instr_map_entries].encoded_ins), max_inst_len , &new_size);
-	if (xed_error != XED_ERROR_NONE) {
-		cerr << "ENCODE ERROR: " << xed_error_enum_t2str(xed_error) << endl;		
-		return -1;
-	}	
-	
-	// add a new entry in the instr_map:
-	
-	instr_map[num_of_instr_map_entries].orig_ins_addr = pc;
-	instr_map[num_of_instr_map_entries].new_ins_addr = (ADDRINT)&tc[tc_cursor];  // set an initial estimated addr in tc
-	instr_map[num_of_instr_map_entries].orig_targ_addr = orig_targ_addr; 
+    
+    xed_error_enum_t xed_error = xed_encode (xedd, reinterpret_cast<UINT8*>(instr_map[num_of_instr_map_entries].encoded_ins), max_inst_len , &new_size);
+    if (xed_error != XED_ERROR_NONE) {
+        cerr << "ENCODE ERROR: " << xed_error_enum_t2str(xed_error) << endl;        
+        return -1;
+    }    
+    
+    // add a new entry in the instr_map:
+    
+    instr_map[num_of_instr_map_entries].orig_ins_addr = pc;
+    instr_map[num_of_instr_map_entries].new_ins_addr = (ADDRINT)&tc[tc_cursor];  // set an initial estimated addr in tc
+    instr_map[num_of_instr_map_entries].orig_targ_addr = orig_targ_addr; 
     instr_map[num_of_instr_map_entries].hasNewTargAddr = false;
-	instr_map[num_of_instr_map_entries].targ_map_entry = -1;
-	instr_map[num_of_instr_map_entries].size = new_size;	
+    instr_map[num_of_instr_map_entries].targ_map_entry = -1;
+    instr_map[num_of_instr_map_entries].size = new_size;    
     instr_map[num_of_instr_map_entries].category_enum = xed_decoded_inst_get_category(xedd);
-	instr_map[num_of_instr_map_entries].context = make_pair(-1, -1);
 
-	num_of_instr_map_entries++;
+    num_of_instr_map_entries++;
 
-	// update expected size of tc:
-	tc_cursor += new_size;    	     
+    // update expected size of tc:
+    tc_cursor += new_size;             
 
-	if (num_of_instr_map_entries >= max_ins_count) {
-		cerr << "out of memory for map_instr" << endl;
-		return -1;
-	}
-	
+    if (num_of_instr_map_entries >= max_ins_count) {
+        cerr << "out of memory for map_instr" << endl;
+        return -1;
+    }
+    
 
     // debug print new encoded instr:
-	if (KnobVerbose) {
-		dump_instr_map_entry(num_of_instr_map_entries-1);
-		// cerr << "    new instr:";
-		// dump_instr_from_mem((ADDRINT *)instr_map[num_of_instr_map_entries-1].encoded_ins, instr_map[num_of_instr_map_entries-1].new_ins_addr);
-	}
+    if (KnobVerbose) {
+        cerr << "    new instr:";
+        dump_instr_from_mem((ADDRINT *)instr_map[num_of_instr_map_entries-1].encoded_ins, instr_map[num_of_instr_map_entries-1].new_ins_addr);
+    }
 
-	return new_size;
+    return new_size;
 }
 
 
@@ -328,8 +323,7 @@ int add_new_instr_entry(xed_decoded_inst_t *xedd, ADDRINT pc, unsigned int size)
 /* Our Auxiliaries                                               */
 /* ============================================================= */
 
-// Decodes and adds a new entry for the provided ins; output decoded is directed to xedd pointer; success status is returned as bool
-bool decode_and_add_ins(INS ins, xed_decoded_inst_t* xedd) {
+bool decode_ins(INS ins, xed_decoded_inst_t* xedd) {
 	ADDRINT ins_addr = INS_Address(ins);
 	xed_error_enum_t xed_code;
 	xed_decoded_inst_zero_set_mode(xedd,&dstate);
@@ -341,8 +335,12 @@ bool decode_and_add_ins(INS ins, xed_decoded_inst_t* xedd) {
 		return false;
 	}
 
-	// Add instr into instr map:
-	int rc = add_new_instr_entry(xedd, ins_addr, INS_Size(ins));
+	return true;
+}
+
+
+bool add_decoded_ins_to_map(ADDRINT ins_addr, xed_decoded_inst_t* xedd) {
+	int rc = add_new_instr_entry(xedd, ins_addr, xed_decoded_inst_get_length(xedd));
 	if (rc < 0) {
 		cerr << "ERROR: failed during instructon translation." << endl;
 		translated_rtn[translated_rtn_num].instr_map_entry = -1;
@@ -353,138 +351,102 @@ bool decode_and_add_ins(INS ins, xed_decoded_inst_t* xedd) {
 }
 
 
-// Adds a nop command at the specified address (length is 1)
-bool add_nop_at_addr(ADDRINT nop_addr) {
-	if (KnobVerbose)
-		cerr << "Adding a NOP command" << endl;
+bool is_hot_call(RTN rtn, ADDRINT call_addr) {
+	return true; // TODO
+}
 
-	xed_decoded_inst_t xedd_nop;
-	xed_error_enum_t xed_code_nop;							
-	xed_decoded_inst_zero_set_mode(&xedd_nop,&dstate); 
 
-	UINT8 nop_arr[1] = { 0x90 };
-	xed_code_nop = xed_decode(&xedd_nop, nop_arr, max_inst_len);
-	if (xed_code_nop != XED_ERROR_NONE) {
-		cerr << "ERROR: failed decode nop";
-		translated_rtn[translated_rtn_num].instr_map_entry = -1;
+bool is_rtn_inline_valid(RTN rtn, ADDRINT call_addr, map<ADDRINT, xed_decoded_inst_t> translations) {	
+	int count_rets = 0;
+	// bool last_seen_is_ret = false;
+	for (INS ins = RTN_InsHead(rtn); INS_Valid(ins); ins = INS_Next(ins)) {
+		xed_decoded_inst_t xedd = translations[INS_Address(ins)];
+		xed_category_enum_t category_enum = xed_decoded_inst_get_category(&xedd);
+		// last_seen_is_ret = false;
+
+		// Check no access to the stack of the caller, that is - access RBP+<positive_offset>
+		if (INS_MemoryBaseReg(ins) == REG_RBP && INS_MemoryDisplacement(ins) > 0) {
+			// cerr << "err: rbp+pos" << endl;
+			return false;
+		}
+
+		// Check no access to the stack of the caller, that is - access RSP+<negative_offset>
+		if (INS_MemoryBaseReg(ins) == REG_RSP && INS_MemoryDisplacement(ins) < 0) {
+			// cerr << "err: rsp-pos" << endl;
+			return false;
+		}
+
+		// Check no direct jumps outside the function's scope
+		if (!INS_IsRet(ins) && INS_IsDirectControlFlow(ins)) {
+			ADDRINT jmp_target = RTN_Address(RTN_FindByAddress(INS_DirectControlFlowTargetAddress(ins)));
+			if (jmp_target != RTN_Address(rtn)) {
+				// cerr << "err: direct jmp ouside scope" << endl;
+				return false;
+			}
+		}
+
+		// Check function doesn't have indirect calls/jmps
+		if (!INS_IsRet(ins) && INS_IsIndirectControlFlow(ins)) {
+			// cerr << "err: indirect" << endl;
+			return false;
+		}
+		
+		// Check function is not recursive (no call to itself)
+		if (category_enum == XED_CATEGORY_CALL) { 
+			xed_int64_t disp = xed_decoded_inst_get_branch_displacement(&xedd);
+			ADDRINT target_addr = INS_Address(ins) + xed_decoded_inst_get_length (&xedd) + disp; 
+			if (target_addr == RTN_Address(rtn)) {// the function calls itself
+				// cerr << "err: recursive" << endl;
+				return false;
+			}
+		}
+
+		if (INS_IsRet(ins)) {
+			count_rets += 1;
+			// last_seen_is_ret = true; // MAYBE REMOVE
+		}
+	}
+
+	if (count_rets != 1) { //|| !last_seen_is_ret) {
+		// cerr << "err: ret problem" << endl;
 		return false;
 	}
 
-	int rc = add_new_instr_entry(&xedd_nop, nop_addr, 1);
-	if (rc < 0) {
-		cerr << "ERROR: failed during instructon translation." << endl;
-		translated_rtn[translated_rtn_num].instr_map_entry = -1;
-		return false;
-	}
-
+	// cerr << "VALID" << endl;
 	return true;
 }
 
 
-bool replace_entry_with_empty_jmp(int entry_index) {
-	// Create an unconditional jump instruction:
-	xed_encoder_instruction_t  enc_instr;
-	xed_inst1(&enc_instr, dstate, 
-				XED_ICLASS_JMP, 64,
-				xed_relbr (0, 32));
-	
-	xed_encoder_request_t enc_req;
-	xed_encoder_request_zero_set_mode(&enc_req, &dstate);
-	xed_bool_t convert_ok = xed_convert_to_encoder_request(&enc_req, &enc_instr);
-	if (!convert_ok) {
-		cerr << "conversion to encode request failed" << endl;
-		return false;
-	}
-	
-	unsigned int ilen = XED_MAX_INSTRUCTION_BYTES;
-	unsigned int olen = 0;
-	xed_error_enum_t xed_error = xed_encode(&enc_req, 
-				reinterpret_cast<UINT8*>(instr_map[entry_index].encoded_ins), ilen, &olen);
-	if (xed_error != XED_ERROR_NONE) {
-	cerr << "ENCODE ERROR: " << xed_error_enum_t2str(xed_error) << endl;
-		return false;
-	}
-	
-	if (KnobVerbose) {
-		cerr << "Replaced entry " << dec << entry_index << " with an empty jmp:" << endl;
-		dump_instr_map_entry(entry_index);
-	}
 
-	return true;
-}
-
-
-void patch_entries_target(vector<int> entries_indices, ADDRINT new_target, int new_entry) {
-	for (int index : entries_indices) {
-		instr_map[index].orig_targ_addr = new_target;
-		instr_map[index].context = make_pair(new_entry, new_entry);
-		if (KnobVerbose) {
-			cerr << "Patched entry " << dec << index << " with target [" << new_entry << "], addr 0x" << hex << new_target << dec << ":" << endl;
-			dump_instr_map_entry(index);
-		}
-	}
-}
-
-
-void patch_inline_entries_context(vector<int> inline_entries, int start, int end) {
-	if (inline_entries.empty())
-		return;
-
-	pair<int, int> new_context = make_pair(start, end);
-	for (int index : inline_entries) {
-		instr_map[index].context = new_context;
-		if (KnobVerbose) {
-			cerr << "Patched entry " << dec << index << " with context (" << new_context.first << ", " << new_context.second << ")" << endl;
-		}
-	}
-}
-
-
-bool is_jmp_inside_rtn(INS ins, RTN rtn) {
-	ADDRINT rtn_start = INS_Address(RTN_InsHead(rtn));
-	ADDRINT ins_target = INS_DirectControlFlowTargetAddress(ins);
-	return ins_target >= rtn_start && ins_target < rtn_start + RTN_Size(rtn);
-}
-
+// ************* OLD AUX
 
 /*************************************************/
 /* chain_all_direct_br_and_call_target_entries() */
 /*************************************************/
 int chain_all_direct_br_and_call_target_entries()
 {
-	if (KnobVerbose)
-		cerr << "\nStart chaining" << endl;
-	for (int i=0; i < num_of_instr_map_entries; i++) {			    
+    for (int i=0; i < num_of_instr_map_entries; i++) {                
 
-		if (instr_map[i].orig_targ_addr == 0)
-			continue;
+        if (instr_map[i].orig_targ_addr == 0)
+            continue;
 
-		if (instr_map[i].hasNewTargAddr)
-			continue;
+        if (instr_map[i].hasNewTargAddr)
+            continue;
 
         for (int j = 0; j < num_of_instr_map_entries; j++) {
 
             if (j == i)
-			   continue;
-	
+               continue;
+    
             if (instr_map[j].orig_ins_addr == instr_map[i].orig_targ_addr) {
-				if (instr_map[i].context.first != -1 && instr_map[i].context.second != -1 &&
-					!(j >= instr_map[i].context.first && j <= instr_map[i].context.second)) {
-						continue; // not the correct pair
-					}
-
                 instr_map[i].hasNewTargAddr = true; 
-	            instr_map[i].targ_map_entry = j;
-				if (KnobVerbose)
-					cerr << "Redirect [" << i << "] from 0x" << hex << instr_map[i].orig_targ_addr << dec << " to [" << j << "] at 0x" << hex << instr_map[j].orig_ins_addr << dec << endl;
+                instr_map[i].targ_map_entry = j;
                 break;
-			}
-		}
-	}
-	if (KnobVerbose)
-		cerr << "\nEnded chaining" << endl;
+            }
+        }
+    }
    
-	return 0;
+    return 0;
 }
 
 
@@ -493,74 +455,74 @@ int chain_all_direct_br_and_call_target_entries()
 /**************************/
 int fix_rip_displacement(int instr_map_entry) 
 {
-	//debug print:
-	//dump_instr_map_entry(instr_map_entry);
+    //debug print:
+    //dump_instr_map_entry(instr_map_entry);
 
-	xed_decoded_inst_t xedd;
-	xed_decoded_inst_zero_set_mode(&xedd,&dstate); 
-				   
-	xed_error_enum_t xed_code = xed_decode(&xedd, reinterpret_cast<UINT8*>(instr_map[instr_map_entry].encoded_ins), max_inst_len);
-	if (xed_code != XED_ERROR_NONE) {
-		cerr << "ERROR: xed decode failed for instr at: " << "0x" << hex << instr_map[instr_map_entry].new_ins_addr << endl;
-		return -1;
-	}
+    xed_decoded_inst_t xedd;
+    xed_decoded_inst_zero_set_mode(&xedd,&dstate); 
+                   
+    xed_error_enum_t xed_code = xed_decode(&xedd, reinterpret_cast<UINT8*>(instr_map[instr_map_entry].encoded_ins), max_inst_len);
+    if (xed_code != XED_ERROR_NONE) {
+        cerr << "ERROR: xed decode failed for instr at: " << "0x" << hex << instr_map[instr_map_entry].new_ins_addr << endl;
+        return -1;
+    }
 
-	unsigned int memops = xed_decoded_inst_number_of_memory_operands(&xedd);
+    unsigned int memops = xed_decoded_inst_number_of_memory_operands(&xedd);
 
-	if (instr_map[instr_map_entry].orig_targ_addr != 0)  // a direct jmp or call instruction.
-		return 0;
+    if (instr_map[instr_map_entry].orig_targ_addr != 0)  // a direct jmp or call instruction.
+        return 0;
 
-	//cerr << "Memory Operands" << endl;
-	bool isRipBase = false;
-	xed_reg_enum_t base_reg = XED_REG_INVALID;
-	xed_int64_t disp = 0;
-	for(unsigned int i=0; i < memops ; i++)   {
+    //cerr << "Memory Operands" << endl;
+    bool isRipBase = false;
+    xed_reg_enum_t base_reg = XED_REG_INVALID;
+    xed_int64_t disp = 0;
+    for(unsigned int i=0; i < memops ; i++)   {
 
-		base_reg = xed_decoded_inst_get_base_reg(&xedd,i);
-		disp = xed_decoded_inst_get_memory_displacement(&xedd,i);
+        base_reg = xed_decoded_inst_get_base_reg(&xedd,i);
+        disp = xed_decoded_inst_get_memory_displacement(&xedd,i);
 
-		if (base_reg == XED_REG_RIP) {
-			isRipBase = true;
-			break;
-		}
-		
-	}
+        if (base_reg == XED_REG_RIP) {
+            isRipBase = true;
+            break;
+        }
+        
+    }
 
-	if (!isRipBase)
-		return 0;
+    if (!isRipBase)
+        return 0;
 
-			
-	//xed_uint_t disp_byts = xed_decoded_inst_get_memory_displacement_width(xedd,i); // how many byts in disp ( disp length in byts - for example FFFFFFFF = 4
-	xed_int64_t new_disp = 0;
-	xed_uint_t new_disp_byts = 4;   // set maximal num of byts for now.
+            
+    //xed_uint_t disp_byts = xed_decoded_inst_get_memory_displacement_width(xedd,i); // how many byts in disp ( disp length in byts - for example FFFFFFFF = 4
+    xed_int64_t new_disp = 0;
+    xed_uint_t new_disp_byts = 4;   // set maximal num of byts for now.
 
-	unsigned int orig_size = xed_decoded_inst_get_length (&xedd);
+    unsigned int orig_size = xed_decoded_inst_get_length (&xedd);
 
-	// modify rip displacement. use direct addressing mode:	
-	new_disp = instr_map[instr_map_entry].orig_ins_addr + disp + orig_size; // xed_decoded_inst_get_length (&xedd_orig);
-	xed_encoder_request_set_base0 (&xedd, XED_REG_INVALID);
+    // modify rip displacement. use direct addressing mode:    
+    new_disp = instr_map[instr_map_entry].orig_ins_addr + disp + orig_size; // xed_decoded_inst_get_length (&xedd_orig);
+    xed_encoder_request_set_base0 (&xedd, XED_REG_INVALID);
 
-	//Set the memory displacement using a bit length 
-	xed_encoder_request_set_memory_displacement (&xedd, new_disp, new_disp_byts);
+    //Set the memory displacement using a bit length 
+    xed_encoder_request_set_memory_displacement (&xedd, new_disp, new_disp_byts);
 
-	unsigned int size = XED_MAX_INSTRUCTION_BYTES;
-	unsigned int new_size = 0;
-			
-	// Converts the decoder request to a valid encoder request:
-	xed_encoder_request_init_from_decode (&xedd);
-	
-	xed_error_enum_t xed_error = xed_encode (&xedd, reinterpret_cast<UINT8*>(instr_map[instr_map_entry].encoded_ins), size , &new_size); // &instr_map[i].size
-	if (xed_error != XED_ERROR_NONE) {
-		cerr << "ENCODE ERROR: " << xed_error_enum_t2str(xed_error) << endl;
-		dump_instr_map_entry(instr_map_entry); 
-		return -1;
-	}				
+    unsigned int size = XED_MAX_INSTRUCTION_BYTES;
+    unsigned int new_size = 0;
+            
+    // Converts the decoder request to a valid encoder request:
+    xed_encoder_request_init_from_decode (&xedd);
+    
+    xed_error_enum_t xed_error = xed_encode (&xedd, reinterpret_cast<UINT8*>(instr_map[instr_map_entry].encoded_ins), size , &new_size); // &instr_map[i].size
+    if (xed_error != XED_ERROR_NONE) {
+        cerr << "ENCODE ERROR: " << xed_error_enum_t2str(xed_error) << endl;
+        dump_instr_map_entry(instr_map_entry); 
+        return -1;
+    }                
 
-	if (KnobVerbose) {
-		dump_instr_map_entry(instr_map_entry);
-	}
+    if (KnobVerbose) {
+        dump_instr_map_entry(instr_map_entry);
+    }
 
-	return new_size;
+    return new_size;
 }
 
 
@@ -570,109 +532,109 @@ int fix_rip_displacement(int instr_map_entry)
 int fix_direct_br_call_to_orig_addr(int instr_map_entry)
 {
 
-	xed_decoded_inst_t xedd;
-	xed_decoded_inst_zero_set_mode(&xedd,&dstate); 
-				   
-	xed_error_enum_t xed_code = xed_decode(&xedd, reinterpret_cast<UINT8*>(instr_map[instr_map_entry].encoded_ins), max_inst_len);
-	if (xed_code != XED_ERROR_NONE) {
-		cerr << "ERROR: xed decode failed for instr at: " << "0x" << hex << instr_map[instr_map_entry].new_ins_addr << endl;
-		return -1;
-	}
-	
-	xed_category_enum_t category_enum = xed_decoded_inst_get_category(&xedd);
-	
-	if (category_enum != XED_CATEGORY_CALL && category_enum != XED_CATEGORY_UNCOND_BR) {
+    xed_decoded_inst_t xedd;
+    xed_decoded_inst_zero_set_mode(&xedd,&dstate); 
+                   
+    xed_error_enum_t xed_code = xed_decode(&xedd, reinterpret_cast<UINT8*>(instr_map[instr_map_entry].encoded_ins), max_inst_len);
+    if (xed_code != XED_ERROR_NONE) {
+        cerr << "ERROR: xed decode failed for instr at: " << "0x" << hex << instr_map[instr_map_entry].new_ins_addr << endl;
+        return -1;
+    }
+    
+    xed_category_enum_t category_enum = xed_decoded_inst_get_category(&xedd);
+    
+    if (category_enum != XED_CATEGORY_CALL && category_enum != XED_CATEGORY_UNCOND_BR) {
 
-		cerr << "ERROR: Invalid direct jump from translated code to original code in rotuine: " 
-			  << RTN_Name(RTN_FindByAddress(instr_map[instr_map_entry].orig_ins_addr)) << endl;
-		dump_instr_map_entry(instr_map_entry);
-		return -1;
-	}
-
-	// check for cases of direct jumps/calls back to the orginal target address:
-	if (instr_map[instr_map_entry].targ_map_entry >= 0) {
-		cerr << "ERROR: Invalid jump or call instruction" << endl;
-		return -1;
-	}
-
-	unsigned int ilen = XED_MAX_INSTRUCTION_BYTES;
-	unsigned int olen = 0;
-				
-
-	xed_encoder_instruction_t  enc_instr;
-
-	ADDRINT new_disp = (ADDRINT)&instr_map[instr_map_entry].orig_targ_addr - 
-		               instr_map[instr_map_entry].new_ins_addr - 
-					   xed_decoded_inst_get_length (&xedd);
-
-	if (category_enum == XED_CATEGORY_CALL)
-			xed_inst1(&enc_instr, dstate, 
-			XED_ICLASS_CALL_NEAR, 64,
-			xed_mem_bd (XED_REG_RIP, xed_disp(new_disp, 32), 64));
-
-	if (category_enum == XED_CATEGORY_UNCOND_BR)
-			xed_inst1(&enc_instr, dstate, 
-			XED_ICLASS_JMP, 64,
-			xed_mem_bd (XED_REG_RIP, xed_disp(new_disp, 32), 64));
-
-
-	xed_encoder_request_t enc_req;
-
-	xed_encoder_request_zero_set_mode(&enc_req, &dstate);
-	xed_bool_t convert_ok = xed_convert_to_encoder_request(&enc_req, &enc_instr);
-	if (!convert_ok) {
-		cerr << "conversion to encode request failed" << endl;
-		return -1;
-	}
-   
-
-	xed_error_enum_t xed_error = xed_encode(&enc_req, reinterpret_cast<UINT8*>(instr_map[instr_map_entry].encoded_ins), ilen, &olen);
-	if (xed_error != XED_ERROR_NONE) {
-		cerr << "ENCODE ERROR: " << xed_error_enum_t2str(xed_error) << endl;
-	    dump_instr_map_entry(instr_map_entry); 
+        cerr << "ERROR: Invalid direct jump from translated code to original code in rotuine: " 
+              << RTN_Name(RTN_FindByAddress(instr_map[instr_map_entry].orig_ins_addr)) << endl;
+        dump_instr_map_entry(instr_map_entry);
         return -1;
     }
 
-	// handle the case where the original instr size is different from new encoded instr:
-	if (olen != xed_decoded_inst_get_length (&xedd)) {
-		
-		new_disp = (ADDRINT)&instr_map[instr_map_entry].orig_targ_addr - 
-	               instr_map[instr_map_entry].new_ins_addr - olen;
+    // check for cases of direct jumps/calls back to the orginal target address:
+    if (instr_map[instr_map_entry].targ_map_entry >= 0) {
+        cerr << "ERROR: Invalid jump or call instruction" << endl;
+        return -1;
+    }
 
-		if (category_enum == XED_CATEGORY_CALL)
-			xed_inst1(&enc_instr, dstate, 
-			XED_ICLASS_CALL_NEAR, 64,
-			xed_mem_bd (XED_REG_RIP, xed_disp(new_disp, 32), 64));
+    unsigned int ilen = XED_MAX_INSTRUCTION_BYTES;
+    unsigned int olen = 0;
+                
 
-		if (category_enum == XED_CATEGORY_UNCOND_BR)
-			xed_inst1(&enc_instr, dstate, 
-			XED_ICLASS_JMP, 64,
-			xed_mem_bd (XED_REG_RIP, xed_disp(new_disp, 32), 64));
+    xed_encoder_instruction_t  enc_instr;
+
+    ADDRINT new_disp = (ADDRINT)&instr_map[instr_map_entry].orig_targ_addr - 
+                       instr_map[instr_map_entry].new_ins_addr - 
+                       xed_decoded_inst_get_length (&xedd);
+
+    if (category_enum == XED_CATEGORY_CALL)
+            xed_inst1(&enc_instr, dstate, 
+            XED_ICLASS_CALL_NEAR, 64,
+            xed_mem_bd (XED_REG_RIP, xed_disp(new_disp, 32), 64));
+
+    if (category_enum == XED_CATEGORY_UNCOND_BR)
+            xed_inst1(&enc_instr, dstate, 
+            XED_ICLASS_JMP, 64,
+            xed_mem_bd (XED_REG_RIP, xed_disp(new_disp, 32), 64));
 
 
-		xed_encoder_request_zero_set_mode(&enc_req, &dstate);
-		xed_bool_t convert_ok = xed_convert_to_encoder_request(&enc_req, &enc_instr);
-		if (!convert_ok) {
-			cerr << "conversion to encode request failed" << endl;
-			return -1;
-		}
+    xed_encoder_request_t enc_req;
 
-		xed_error = xed_encode (&enc_req, reinterpret_cast<UINT8*>(instr_map[instr_map_entry].encoded_ins), ilen , &olen);
-		if (xed_error != XED_ERROR_NONE) {
-			cerr << "ENCODE ERROR: " << xed_error_enum_t2str(xed_error) << endl;
-			dump_instr_map_entry(instr_map_entry);
-			return -1;
-		}		
-	}
+    xed_encoder_request_zero_set_mode(&enc_req, &dstate);
+    xed_bool_t convert_ok = xed_convert_to_encoder_request(&enc_req, &enc_instr);
+    if (!convert_ok) {
+        cerr << "conversion to encode request failed" << endl;
+        return -1;
+    }
+   
 
-	
-	// debug prints:
-	if (KnobVerbose) {
-		dump_instr_map_entry(instr_map_entry); 
-	}
-		
-	instr_map[instr_map_entry].hasNewTargAddr = true;
-	return olen;	
+    xed_error_enum_t xed_error = xed_encode(&enc_req, reinterpret_cast<UINT8*>(instr_map[instr_map_entry].encoded_ins), ilen, &olen);
+    if (xed_error != XED_ERROR_NONE) {
+        cerr << "ENCODE ERROR: " << xed_error_enum_t2str(xed_error) << endl;
+        dump_instr_map_entry(instr_map_entry); 
+        return -1;
+    }
+
+    // handle the case where the original instr size is different from new encoded instr:
+    if (olen != xed_decoded_inst_get_length (&xedd)) {
+        
+        new_disp = (ADDRINT)&instr_map[instr_map_entry].orig_targ_addr - 
+                   instr_map[instr_map_entry].new_ins_addr - olen;
+
+        if (category_enum == XED_CATEGORY_CALL)
+            xed_inst1(&enc_instr, dstate, 
+            XED_ICLASS_CALL_NEAR, 64,
+            xed_mem_bd (XED_REG_RIP, xed_disp(new_disp, 32), 64));
+
+        if (category_enum == XED_CATEGORY_UNCOND_BR)
+            xed_inst1(&enc_instr, dstate, 
+            XED_ICLASS_JMP, 64,
+            xed_mem_bd (XED_REG_RIP, xed_disp(new_disp, 32), 64));
+
+
+        xed_encoder_request_zero_set_mode(&enc_req, &dstate);
+        xed_bool_t convert_ok = xed_convert_to_encoder_request(&enc_req, &enc_instr);
+        if (!convert_ok) {
+            cerr << "conversion to encode request failed" << endl;
+            return -1;
+        }
+
+        xed_error = xed_encode (&enc_req, reinterpret_cast<UINT8*>(instr_map[instr_map_entry].encoded_ins), ilen , &olen);
+        if (xed_error != XED_ERROR_NONE) {
+            cerr << "ENCODE ERROR: " << xed_error_enum_t2str(xed_error) << endl;
+            dump_instr_map_entry(instr_map_entry);
+            return -1;
+        }        
+    }
+
+    
+    // debug prints:
+    if (KnobVerbose) {
+        dump_instr_map_entry(instr_map_entry); 
+    }
+        
+    instr_map[instr_map_entry].hasNewTargAddr = true;
+    return olen;    
 }
 
 
@@ -680,93 +642,93 @@ int fix_direct_br_call_to_orig_addr(int instr_map_entry)
 /* fix_direct_br_call_displacement */
 /***********************************/
 int fix_direct_br_call_displacement(int instr_map_entry) 
-{					
+{                    
 
-	xed_decoded_inst_t xedd;
-	xed_decoded_inst_zero_set_mode(&xedd,&dstate); 
-				   
-	xed_error_enum_t xed_code = xed_decode(&xedd, reinterpret_cast<UINT8*>(instr_map[instr_map_entry].encoded_ins), max_inst_len);
-	if (xed_code != XED_ERROR_NONE) {
-		cerr << "ERROR: xed decode failed for instr at: " << "0x" << hex << instr_map[instr_map_entry].new_ins_addr << endl;
-		return -1;
-	}
+    xed_decoded_inst_t xedd;
+    xed_decoded_inst_zero_set_mode(&xedd,&dstate); 
+                   
+    xed_error_enum_t xed_code = xed_decode(&xedd, reinterpret_cast<UINT8*>(instr_map[instr_map_entry].encoded_ins), max_inst_len);
+    if (xed_code != XED_ERROR_NONE) {
+        cerr << "ERROR: xed decode failed for instr at: " << "0x" << hex << instr_map[instr_map_entry].new_ins_addr << endl;
+        return -1;
+    }
 
-	xed_int32_t  new_disp = 0;	
-	unsigned int size = XED_MAX_INSTRUCTION_BYTES;
-	unsigned int new_size = 0;
+    xed_int32_t  new_disp = 0;    
+    unsigned int size = XED_MAX_INSTRUCTION_BYTES;
+    unsigned int new_size = 0;
 
 
-	xed_category_enum_t category_enum = xed_decoded_inst_get_category(&xedd);
-	
-	if (category_enum != XED_CATEGORY_CALL && category_enum != XED_CATEGORY_COND_BR && category_enum != XED_CATEGORY_UNCOND_BR) {
-		cerr << "ERROR: unrecognized branch displacement" << endl;
-		return -1;
-	}
-
-	// fix branches/calls to original targ addresses:
-	if (instr_map[instr_map_entry].targ_map_entry < 0) {
-	   int rc = fix_direct_br_call_to_orig_addr(instr_map_entry);
-	   return rc;
-	}
-
-	ADDRINT new_targ_addr;		
-	new_targ_addr = instr_map[instr_map[instr_map_entry].targ_map_entry].new_ins_addr;
-		
-	new_disp = (new_targ_addr - instr_map[instr_map_entry].new_ins_addr) - instr_map[instr_map_entry].size; // orig_size;
-
-	xed_uint_t   new_disp_byts = 4; // num_of_bytes(new_disp);  ???
-
-	// the max displacement size of loop instructions is 1 byte:
-	xed_iclass_enum_t iclass_enum = xed_decoded_inst_get_iclass(&xedd);
-	if (iclass_enum == XED_ICLASS_LOOP ||  iclass_enum == XED_ICLASS_LOOPE || iclass_enum == XED_ICLASS_LOOPNE) {
-	  new_disp_byts = 1;
-	}
-
-	// the max displacement size of jecxz instructions is ???:
-	xed_iform_enum_t iform_enum = xed_decoded_inst_get_iform_enum (&xedd);
-	if (iform_enum == XED_IFORM_JRCXZ_RELBRb){
-	  new_disp_byts = 1;
-	}
-
-	// Converts the decoder request to a valid encoder request:
-	xed_encoder_request_init_from_decode (&xedd);
-
-	//Set the branch displacement:
-	xed_encoder_request_set_branch_displacement (&xedd, new_disp, new_disp_byts);
-
-	xed_uint8_t enc_buf[XED_MAX_INSTRUCTION_BYTES];
-	unsigned int max_size = XED_MAX_INSTRUCTION_BYTES;
+    xed_category_enum_t category_enum = xed_decoded_inst_get_category(&xedd);
     
-	xed_error_enum_t xed_error = xed_encode (&xedd, enc_buf, max_size , &new_size);
-	if (xed_error != XED_ERROR_NONE) {
-		cerr << "ENCODE ERROR: " << xed_error_enum_t2str(xed_error) <<  endl;
-		char buf[2048];		
-		xed_format_context(XED_SYNTAX_INTEL, &xedd, buf, 2048, static_cast<UINT64>(instr_map[instr_map_entry].orig_ins_addr), 0, 0);
-	    cerr << " instr: " << "0x" << hex << instr_map[instr_map_entry].orig_ins_addr << " : " << buf <<  endl;
-  		return -1;
-	}		
+    if (category_enum != XED_CATEGORY_CALL && category_enum != XED_CATEGORY_COND_BR && category_enum != XED_CATEGORY_UNCOND_BR) {
+        cerr << "ERROR: unrecognized branch displacement" << endl;
+        return -1;
+    }
 
-	new_targ_addr = instr_map[instr_map[instr_map_entry].targ_map_entry].new_ins_addr;
+    // fix branches/calls to original targ addresses:
+    if (instr_map[instr_map_entry].targ_map_entry < 0) {
+       int rc = fix_direct_br_call_to_orig_addr(instr_map_entry);
+       return rc;
+    }
 
-	new_disp = new_targ_addr - (instr_map[instr_map_entry].new_ins_addr + new_size);  // this is the correct displacemnet.
+    ADDRINT new_targ_addr;        
+    new_targ_addr = instr_map[instr_map[instr_map_entry].targ_map_entry].new_ins_addr;
+        
+    new_disp = (new_targ_addr - instr_map[instr_map_entry].new_ins_addr) - instr_map[instr_map_entry].size; // orig_size;
 
-	//Set the branch displacement:
-	xed_encoder_request_set_branch_displacement (&xedd, new_disp, new_disp_byts);
-	
-	xed_error = xed_encode (&xedd, reinterpret_cast<UINT8*>(instr_map[instr_map_entry].encoded_ins), size , &new_size); // &instr_map[i].size
-	if (xed_error != XED_ERROR_NONE) {
-		cerr << "ENCODE ERROR: " << xed_error_enum_t2str(xed_error) << endl;
-		dump_instr_map_entry(instr_map_entry);
-		return -1;
-	}				
+    xed_uint_t   new_disp_byts = 4; // num_of_bytes(new_disp);  ???
 
-	//debug print of new instruction in tc:
-	if (KnobVerbose) {
-		dump_instr_map_entry(instr_map_entry);
-	}
+    // the max displacement size of loop instructions is 1 byte:
+    xed_iclass_enum_t iclass_enum = xed_decoded_inst_get_iclass(&xedd);
+    if (iclass_enum == XED_ICLASS_LOOP ||  iclass_enum == XED_ICLASS_LOOPE || iclass_enum == XED_ICLASS_LOOPNE) {
+      new_disp_byts = 1;
+    }
 
-	return new_size;
-}				
+    // the max displacement size of jecxz instructions is ???:
+    xed_iform_enum_t iform_enum = xed_decoded_inst_get_iform_enum (&xedd);
+    if (iform_enum == XED_IFORM_JRCXZ_RELBRb){
+      new_disp_byts = 1;
+    }
+
+    // Converts the decoder request to a valid encoder request:
+    xed_encoder_request_init_from_decode (&xedd);
+
+    //Set the branch displacement:
+    xed_encoder_request_set_branch_displacement (&xedd, new_disp, new_disp_byts);
+
+    xed_uint8_t enc_buf[XED_MAX_INSTRUCTION_BYTES];
+    unsigned int max_size = XED_MAX_INSTRUCTION_BYTES;
+    
+    xed_error_enum_t xed_error = xed_encode (&xedd, enc_buf, max_size , &new_size);
+    if (xed_error != XED_ERROR_NONE) {
+        cerr << "ENCODE ERROR: " << xed_error_enum_t2str(xed_error) <<  endl;
+        char buf[2048];        
+        xed_format_context(XED_SYNTAX_INTEL, &xedd, buf, 2048, static_cast<UINT64>(instr_map[instr_map_entry].orig_ins_addr), 0, 0);
+        cerr << " instr: " << "0x" << hex << instr_map[instr_map_entry].orig_ins_addr << " : " << buf <<  endl;
+          return -1;
+    }        
+
+    new_targ_addr = instr_map[instr_map[instr_map_entry].targ_map_entry].new_ins_addr;
+
+    new_disp = new_targ_addr - (instr_map[instr_map_entry].new_ins_addr + new_size);  // this is the correct displacemnet.
+
+    //Set the branch displacement:
+    xed_encoder_request_set_branch_displacement (&xedd, new_disp, new_disp_byts);
+    
+    xed_error = xed_encode (&xedd, reinterpret_cast<UINT8*>(instr_map[instr_map_entry].encoded_ins), size , &new_size); // &instr_map[i].size
+    if (xed_error != XED_ERROR_NONE) {
+        cerr << "ENCODE ERROR: " << xed_error_enum_t2str(xed_error) << endl;
+        dump_instr_map_entry(instr_map_entry);
+        return -1;
+    }                
+
+    //debug print of new instruction in tc:
+    if (KnobVerbose) {
+        dump_instr_map_entry(instr_map_entry);
+    }
+
+    return new_size;
+}                
 
 
 /************************************/
@@ -776,56 +738,56 @@ int fix_instructions_displacements()
 {
    // fix displacemnets of direct branch or call instructions:
 
-    int size_diff = 0;	
+    int size_diff = 0;    
 
-	do {
-		
-		size_diff = 0;
+    do {
+        
+        size_diff = 0;
 
-		if (KnobVerbose) {
-			cerr << "\nstarting a pass of fixing instructions displacements: " << endl;
-		}
+        if (KnobVerbose) {
+            cerr << "starting a pass of fixing instructions displacements: " << endl;
+        }
 
-		for (int i=0; i < num_of_instr_map_entries; i++) {
+        for (int i=0; i < num_of_instr_map_entries; i++) {
 
-			instr_map[i].new_ins_addr += size_diff;
-				   
-			int new_size = 0;
+            instr_map[i].new_ins_addr += size_diff;
+                   
+            int new_size = 0;
 
-			// fix rip displacement:			
-			new_size = fix_rip_displacement(i);
-			if (new_size < 0)
-				return -1;
+            // fix rip displacement:            
+            new_size = fix_rip_displacement(i);
+            if (new_size < 0)
+                return -1;
 
-			if (new_size > 0) { // this was a rip-based instruction which was fixed.
+            if (new_size > 0) { // this was a rip-based instruction which was fixed.
 
-				if (instr_map[i].size != (unsigned int)new_size) {
-				   size_diff += (new_size - instr_map[i].size); 					
-				   instr_map[i].size = (unsigned int)new_size;								
-				}
+                if (instr_map[i].size != (unsigned int)new_size) {
+                   size_diff += (new_size - instr_map[i].size);                     
+                   instr_map[i].size = (unsigned int)new_size;                                
+                }
 
-				continue;   
-			}
+                continue;   
+            }
 
-			// check if it is a direct branch or a direct call instr:
-			if (instr_map[i].orig_targ_addr == 0) {
-				continue;  // not a direct branch or a direct call instr.
-			}
+            // check if it is a direct branch or a direct call instr:
+            if (instr_map[i].orig_targ_addr == 0) {
+                continue;  // not a direct branch or a direct call instr.
+            }
 
 
-			// fix instr displacement:			
-			new_size = fix_direct_br_call_displacement(i);
-			if (new_size < 0)
-				return -1;
+            // fix instr displacement:            
+            new_size = fix_direct_br_call_displacement(i);
+            if (new_size < 0)
+                return -1;
 
-			if (instr_map[i].size != (unsigned int)new_size) {
-			   size_diff += (new_size - instr_map[i].size);
-			   instr_map[i].size = (unsigned int)new_size;
-			}
+            if (instr_map[i].size != (unsigned int)new_size) {
+               size_diff += (new_size - instr_map[i].size);
+               instr_map[i].size = (unsigned int)new_size;
+            }
 
-		}  // end int i=0; i ..
+        }  // end int i=0; i ..
 
-	} while (size_diff != 0);
+    } while (size_diff != 0);
 
    return 0;
  }
@@ -834,121 +796,137 @@ int fix_instructions_displacements()
 /*****************************************/
 /* find_candidate_rtns_for_translation() */
 /*****************************************/
+// new version
 int find_candidate_rtns_for_translation(IMG img)
 {
-    // int rc;
-	int inlines_left = 16; // for debugging
-	// go over routines and check if they are candidates for translation and mark them for translation:
+    map<ADDRINT, xed_decoded_inst_t> local_instrs_map;
+    local_instrs_map.clear();
 
-	for (SEC sec = IMG_SecHead(img); SEC_Valid(sec); sec = SEC_Next(sec))
+    // go over routines and check if they are candidates for translation and mark them for translation:
+
+    for (SEC sec = IMG_SecHead(img); SEC_Valid(sec); sec = SEC_Next(sec))
     {   
-		if (!SEC_IsExecutable(sec) || SEC_IsWriteable(sec) || !SEC_Address(sec))
-			continue;
+        if (!SEC_IsExecutable(sec) || SEC_IsWriteable(sec) || !SEC_Address(sec))
+            continue;
 
         for (RTN rtn = SEC_RtnHead(sec); RTN_Valid(rtn); rtn = RTN_Next(rtn))
-        {	
+        {    
+            if (rtn == RTN_Invalid()) {
+              cerr << "Warning: invalid routine " << RTN_Name(rtn) << endl;
+                continue;
+            }
 
-			if (rtn == RTN_Invalid()) {
-			  cerr << "Warning: invalid routine " << RTN_Name(rtn) << endl;
-  			  continue;
-			}
+            translated_rtn[translated_rtn_num].rtn_addr = RTN_Address(rtn);            
+            translated_rtn[translated_rtn_num].rtn_size = RTN_Size(rtn);
 
-			translated_rtn[translated_rtn_num].rtn_addr = RTN_Address(rtn);			
-			translated_rtn[translated_rtn_num].rtn_size = RTN_Size(rtn);
-			translated_rtn[translated_rtn_num].instr_map_entry = num_of_instr_map_entries;
-			translated_rtn[translated_rtn_num].isSafeForReplacedProbe = true;	
+            // Open the RTN.
+            RTN_Open( rtn ); 
+            
+            for (INS ins = RTN_InsHead(rtn); INS_Valid(ins); ins = INS_Next(ins)) {             
+                ADDRINT addr = INS_Address(ins);              
+                xed_decoded_inst_t xedd;
+				if (!decode_ins(ins, &xedd))
+					break;
+                // Save xed and addr into a map to be used later.
+                local_instrs_map[addr] = xedd;
+            } // end for INS...
 
-			// Open the RTN.
-			RTN_Open( rtn );              
+            // Close the RTN.
+            RTN_Close( rtn );
 
-			// debug print of routine name:
-			if (KnobVerbose) {
-				cerr << "\nrtn name: " << RTN_Name(rtn) << " : " << dec << translated_rtn_num << endl;
-			}
+            translated_rtn_num++;
 
-			ADDRINT caller_addr = 0;
-            vector<int> entries_to_patch;
+         } // end for RTN..
+    } // end for SEC...
 
-            for (INS ins = RTN_InsHead(rtn); INS_Valid(ins); ins = INS_Next(ins)) {
-				ADDRINT addr = INS_Address(ins);
-                // Check if we need to skip a caller_addr to an inlined function
-                if (caller_addr >= addr)
-                   continue;
+	if (KnobVerbose)
+		cerr << "Finished translation.\n" << endl;
 
-                // Skeleton of function inlining:
-                if (INS_IsDirectCall(ins) && inlines_left > 0) {
-					inlines_left -= 1;
-                    caller_addr = addr;
-                    ADDRINT callee_addr = INS_DirectControlFlowTargetAddress(ins);
-                    RTN rtn_callee = RTN_FindByAddress(callee_addr);
-					cerr << "Inline function " << RTN_Name(rtn_callee) << " from caller " << RTN_Name(rtn) << endl;
+    // Go over the local_instrs_map map and add each instruction to the instr_map:
+    int rtn_num = 0;
+	vector<ADDRINT> inlined_ret_addr; // TODO: done to avoid repeated inlining, should be removed when inst is ready
+    inlined_ret_addr.clear();
+	vector<int> retns_to_check { 48, 47 };
 
-					// replace the call with a single nop
-					if (!add_nop_at_addr(INS_Address(ins))) {
+    for (map<ADDRINT, xed_decoded_inst_t>::iterator iter = local_instrs_map.begin(); iter != local_instrs_map.end(); iter++) {
+		ADDRINT addr = iter->first;
+		xed_decoded_inst_t xedd = iter->second;
+
+		// Check if we are at a routine header:
+		if (translated_rtn[rtn_num].rtn_addr == addr) {
+			// if (KnobVerbose)
+				cerr << "\nEntered function no. [" << dec << rtn_num << "]: " << RTN_Name(RTN_FindByAddress(addr)) << endl;
+
+			rtn_num++;
+
+			if (find(retns_to_check.begin(), retns_to_check.end(), rtn_num - 1) == retns_to_check.end())
+				continue;
+			cerr << "Try with num " << rtn_num - 1 << endl;
+
+			translated_rtn[rtn_num-1].instr_map_entry = num_of_instr_map_entries;
+			translated_rtn[rtn_num-1].isSafeForReplacedProbe = true;
+		}
+
+		if (find(retns_to_check.begin(), retns_to_check.end(), rtn_num - 1) == retns_to_check.end())
+			continue;
+		
+		// Check if this is a direct call instr:    
+		xed_category_enum_t category_enum = xed_decoded_inst_get_category(&xedd);
+		if (category_enum == XED_CATEGORY_CALL) { 
+			xed_int64_t disp = xed_decoded_inst_get_branch_displacement(&xedd);
+			ADDRINT target_addr = addr + xed_decoded_inst_get_length (&xedd) + disp; 
+			RTN rtn = RTN_FindByAddress(target_addr);
+			RTN_Open(rtn);
+
+			// Check Function call is to the beginning of a valid function
+			if (INS_Address(RTN_InsHead(rtn)) == target_addr &&
+				is_hot_call(rtn, addr) && is_rtn_inline_valid(rtn, addr, local_instrs_map) 
+				&& find(inlined_ret_addr.begin(), inlined_ret_addr.end(), target_addr) == inlined_ret_addr.end()) {
+				inlined_ret_addr.push_back(target_addr);
+				// replace the call with a single nop
+				// if (!add_nop_at_addr(addr)) {
+				// 	break;
+				// }
+
+				// Do inline
+				cerr << "Start inlining rtn " << RTN_Name(rtn) << " at 0x" << hex << instr_map[num_of_instr_map_entries-1].new_ins_addr << dec << endl;
+
+				for (INS ins_callee = RTN_InsHead(rtn); INS_Valid(ins_callee); ins_callee = INS_Next(ins_callee)) {
+					if (KnobVerbose)
+						cerr << "Original inst: " << INS_Disassemble(ins_callee) << endl;
+
+					if (INS_IsRet(ins_callee)) {
 						break;
 					}
-
-					patch_entries_target(entries_to_patch, INS_Address(ins), num_of_instr_map_entries - 1);
-					entries_to_patch.clear();
-
-                    RTN_Close( rtn );
-                    RTN_Open(rtn_callee);
-					if (KnobVerbose)
-						cerr << "Start inlining function " << RTN_Name(rtn_callee) << endl;
-
-					vector<int> inline_jmp_entries;
-					int last_inst_before_inline = num_of_instr_map_entries - 1;
-                    for (INS ins_callee = RTN_InsHead(rtn_callee); INS_Valid(ins_callee); ins_callee = INS_Next(ins_callee)) {
-						xed_decoded_inst_t xedd_callee;
-						if (!decode_and_add_ins(ins_callee, &xedd_callee)) { // failed to encode / add to instr_map
+					else {
+						xed_decoded_inst_t xedd_callee = local_instrs_map[INS_Address(ins_callee)];
+						if (!add_decoded_ins_to_map(INS_Address(ins_callee), &xedd_callee)) { // failed to encode / add to instr_map
 							break;
 						}
-
-						if (INS_IsRet(ins_callee)) {
-							if (!replace_entry_with_empty_jmp(num_of_instr_map_entries-1)) {
-								break;
-							}
-							else {
-								entries_to_patch.push_back(num_of_instr_map_entries-1);
-							}
-						}
-
-						else if (INS_IsDirectBranch(ins_callee) && is_jmp_inside_rtn(ins_callee, rtn_callee)) {
-							inline_jmp_entries.push_back(num_of_instr_map_entries - 1);
-						}
-                    }
-
-					// Fix context for inside-function jmp inline entries
-					patch_inline_entries_context(inline_jmp_entries, last_inst_before_inline + 1, num_of_instr_map_entries - 1);
-					inline_jmp_entries.clear();
-
-					if (KnobVerbose)
-						cerr << "Ended inlining function " << RTN_Name(rtn_callee) << endl;
-
-                    RTN_Close(rtn_callee);
-                    RTN_Open( rtn );
-                    ins = RTN_InsHead(rtn);
-                    continue;
-                }
-
-				else {
-					xed_decoded_inst_t xedd;
-					if (!decode_and_add_ins(ins, &xedd)) { // failed to encode / add to instr_map
-						break;
 					}
-					patch_entries_target(entries_to_patch, INS_Address(ins), num_of_instr_map_entries - 1);
-					entries_to_patch.clear();
 				}
-			} // end for INS...
 
-			// Close the RTN.
-			RTN_Close( rtn );
+				if (KnobVerbose)
+					cerr << "End inlining rtn " << RTN_Name(rtn) << endl;
+			}
+			
+			else {
+				// Add instr into global instr_map:
+				if (!add_decoded_ins_to_map(addr, &xedd))
+					break;
+			}
 
-			translated_rtn_num++;
-		} // end for RTN..
-	} // end for SEC...
+			RTN_Close(rtn);
+		}
 
-	return 0;
+		else {
+			// Add instr into global instr_map:
+			if (!add_decoded_ins_to_map(addr, &xedd))
+				break;
+		}
+    } // end for map<...
+
+    return 0;
 }
 
 
@@ -1164,8 +1142,8 @@ VOID ImageLoad(IMG img, VOID *v)
 	cout << "after write all new instructions to memory tc" << endl;
 
    if (KnobDumpTranslatedCode) {
-	   cerr << "Translation Cache dump:" << endl;
-       dump_tc();  // dump the entire tc
+	//    cerr << "Translation Cache dump:" << endl;
+    //    dump_tc();  // dump the entire tc
 
 	   cerr << endl << "instructions map dump:" << endl;
 	   dump_entire_instr_map();     // dump all translated instructions in map_instr
