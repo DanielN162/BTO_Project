@@ -45,10 +45,21 @@ KNOB<BOOL>   KnobDoNotCommitTranslatedCode(KNOB_MODE_WRITEONCE,    "pintool",
 /* ===================================================================== */
 
 // OURS - for processing profiling data
+// -----------------------------------------------------
 vector<pair<ADDRINT, ADDRINT>> hot_calls;
 vector<pair<ADDRINT, ADDRINT>> hot_calls_to_inline;
 const int NUM_HOT_CALLS = 10;
 const int MIN_CALLS = 100;
+
+struct bbl_data {
+    ADDRINT bbl_tail;
+    ADDRINT next_taken;
+    ADDRINT next_not_taken;
+    int hotter_next; // 0 when branch is more likely to be taken, otherwise 1
+};
+
+map<ADDRINT, bbl_data> bbl_map; // key is bbl_head
+// -----------------------------------------------------
 
 // For XED:
 #if defined(TARGET_IA32E)
@@ -824,6 +835,84 @@ int fix_instructions_displacements()
    return 0;
  }
 
+// OURS
+int load_profiling_data(vector<RTN> callers_to_omit) {
+    ifstream call_prof_file;
+    ifstream branch_prof_file;
+    call_prof_file.open("call-count.csv");
+    if (!call_prof_file) {
+        cerr << "failed to open profiling data file" << endl;
+        return 0;
+    }
+    branch_prof_file.open("branch-count.csv");
+    if (!branch_prof_file) {
+        cerr << "failed to open profiling data file" << endl;
+        return 0;
+    }
+
+    string call_addr_str;
+    string call_num_str;
+    string call_targ_str;
+    ADDRINT hot_call_addr;
+    ADDRINT hot_target_addr;
+
+    // go over loop profiling until we've found all hot call sites
+    while(true) { // TODO: change condition?
+        getline(call_prof_file, call_addr_str, ','); // read hot call address
+        hot_call_addr = AddrintFromString(call_addr_str);
+        getline(call_prof_file, call_num_str, ','); // read number of times call has been invoked
+        if (atoi(call_num_str.c_str()) < MIN_CALLS) { // TODO: change condition?
+            // cerr << "not enough calls";
+            break;
+        }
+        // cerr << "enough calls" << endl;
+        getline(call_prof_file, call_targ_str); // read target of hot call
+        hot_target_addr = AddrintFromString(call_targ_str);
+
+        if (is_rtn_inline_valid(hot_call_addr, hot_target_addr)) {
+            // hot_calls_to_inline.push_back(make_pair(hot_call_addr, hot_target_addr)); // mark call as hot
+            // callers_to_omit.push_back(RTN_FindByAddress(hot_call_addr));
+            std::cout << "Hot call found at 0x" << hex << hot_call_addr << " to addr 0x" << hot_target_addr << dec << ", num invocations: " << call_num_str << std::endl;
+            int x;
+            cin >> x; // Get user input from the keyboard
+            if (x != 0) {
+                hot_calls_to_inline.push_back(make_pair(hot_call_addr, hot_target_addr)); // mark call as hot
+                callers_to_omit.push_back(RTN_FindByAddress(hot_call_addr));
+            }
+        }
+        else {
+            // cerr << "illegal" << endl;
+        }
+
+        if (!call_prof_file) { // reached end of file
+            break;
+        }
+    }
+
+    string line;
+    ADDRINT bbl_addr;
+    // go over branch profiling until we loaded all info
+    while(true) {
+        bbl_data curr;
+        getline(branch_prof_file, line, ','); // read bbl address
+        bbl_addr = AddrintFromString(line);
+        getline(branch_prof_file, line, ','); // read bbl tail address
+        curr.bbl_tail = AddrintFromString(line);
+        getline(branch_prof_file, line, ','); // read taken address
+        curr.next_taken = AddrintFromString(line);
+        getline(branch_prof_file, line, ','); // read not taken address
+        curr.next_not_taken = AddrintFromString(line);
+        getline(branch_prof_file, line); // hotter next
+        curr.hotter_next = atoi(line.c_str());
+        bbl_map[bbl_addr] = curr;
+
+        if (!branch_prof_file) { // reached end of file
+            break;
+        }
+    }
+
+    return 1;
+}
 
 /*****************************************/
 /* find_candidate_rtns_for_translation() */
@@ -831,52 +920,12 @@ int fix_instructions_displacements()
 // new version
 int find_candidate_rtns_for_translation(IMG img)
 {
-    ifstream prof_file;
-    prof_file.open("call-count.csv");
-    if (!prof_file) {
-        cerr << "failed to open profiling data file" << endl;
+    vector<RTN> callers_to_omit;
+    if(!load_profiling_data(callers_to_omit)) {
         return 0;
     }
 
-    string call_addr_str;
-    string call_num_str;
-	string call_targ_str;
-	ADDRINT hot_call_addr;
-	ADDRINT hot_target_addr;
-	vector<RTN> callers_to_emit;
-
-    // go over loop profiling data until we've found 10 different routines
-    while(true) { // TODO: change condition?
-        getline(prof_file, call_addr_str, ','); // read hot call address
-        hot_call_addr = AddrintFromString(call_addr_str);
-        getline(prof_file, call_num_str, ','); // read number of times call has been invoked
-        if (atoi(call_num_str.c_str()) < MIN_CALLS) { // TODO: change condition?
-			// cerr << "not enough calls";
-            break;
-        }
-		// cerr << "enough calls" << endl;
-        getline(prof_file, call_targ_str); // read target of hot call
-		hot_target_addr = AddrintFromString(call_targ_str);
-
-		if (is_rtn_inline_valid(hot_call_addr, hot_target_addr)) {
-			// hot_calls_to_inline.push_back(make_pair(hot_call_addr, hot_target_addr)); // mark call as hot
-			// callers_to_emit.push_back(RTN_FindByAddress(hot_call_addr));
-			std::cout << "Hot call found at 0x" << hex << hot_call_addr << " to addr 0x" << hot_target_addr << dec << ", num invocations: " << call_num_str << std::endl;
-			int x; 
-			cin >> x; // Get user input from the keyboard
-			if (x != 0) {
-				hot_calls_to_inline.push_back(make_pair(hot_call_addr, hot_target_addr)); // mark call as hot
-				callers_to_emit.push_back(RTN_FindByAddress(hot_call_addr));
-			}
-		}
-		else {
-			// cerr << "illegal" << endl;
-		}
-
-        if (!prof_file) { // reached end of file
-            break;
-        }
-    }
+    // TODO: go over bbl_map. For each bbl where !bbl.hotter_next, revert jump
 
     map<ADDRINT, xed_decoded_inst_t> local_instrs_map;
     local_instrs_map.clear();
@@ -933,7 +982,7 @@ int find_candidate_rtns_for_translation(IMG img)
 			rtn_num++;
 		}
 
-		if (find(callers_to_emit.begin(), callers_to_emit.end(), RTN_FindByAddress(addr)) != callers_to_emit.end()) { // do not emit this caller
+		if (find(callers_to_omit.begin(), callers_to_omit.end(), RTN_FindByAddress(addr)) != callers_to_omit.end()) { // do not emit this caller
 			if (translated_rtn[rtn_num-1].rtn_addr == addr) {
 				cerr << "\nEntered function no. [" << dec << rtn_num - 1 << "]: " << RTN_Name(RTN_FindByAddress(addr)) << endl;
 				translated_rtn[rtn_num-1].instr_map_entry = num_of_instr_map_entries;
@@ -1234,6 +1283,9 @@ VOID ImageLoad(IMG img, VOID *v)
 map<ADDRINT, UINT64> call_count_map;
 map<ADDRINT, ADDRINT> call_target_map;
 
+map<ADDRINT, UINT64> taken_map;
+map<ADDRINT, UINT64> not_taken_map;
+
 // // count iterations for loop
 // VOID docount_seen(ADDRINT target_addr, INT32 taken) {
 //     if (taken) {
@@ -1244,7 +1296,16 @@ map<ADDRINT, ADDRINT> call_target_map;
 
 VOID docount_call(ADDRINT call_addr) {
     call_count_map[call_addr]++;
-};
+}
+
+VOID docount_branch(INT32 isTaken, ADDRINT branchAddr) {
+    if (isTaken) {
+        taken_map[branchAddr]++;
+    }
+    else {
+        not_taken_map[branchAddr]++;
+    }
+}
 
 // // count invocations (ignore iterations) and update diffs, for two different types of loops
 // // runs when we EXIT an invocation (prepares vector for the next one)
@@ -1277,6 +1338,33 @@ VOID docount_call(ADDRINT call_addr) {
 
 /* ===================================================================== */
 
+VOID Trace(TRACE trace, VOID* v) {
+    for (BBL bbl = TRACE_BblHead(trace); BBL_Valid(bbl); bbl = BBL_Next(bbl)) {
+        INS head = BBL_InsHead(bbl);
+        INS tail = BBL_InsTail(bbl);
+        
+        ADDRINT head_addr = INS_Address(head);
+        ADDRINT tail_addr = INS_Address(tail);
+        bbl_data curr_bbl = {tail_addr, 0, 0, 0};
+        bbl_map[head_addr] = curr_bbl;
+
+        if (INS_HasFallThrough(tail)) {
+            bbl_map[head_addr].next_not_taken = INS_NextAddress(tail);
+        }
+
+        if (INS_IsDirectBranch(tail)) {
+            bbl_map[head_addr].next_taken = INS_DirectControlFlowTargetAddress(tail);
+            INS_InsertCall( // count number of times the branch was taken or not taken
+                tail, IPOINT_BEFORE,
+                (AFUNPTR)docount_branch,
+                IARG_BRANCH_TAKEN,
+                IARG_ADDRINT, tail_addr,
+                IARG_END
+            );
+        }
+    }
+}
+
 VOID Instruction(INS ins, VOID* v) {
      RTN rtn = INS_Rtn(ins);
      ADDRINT rtn_addr = RTN_Address(rtn);
@@ -1295,18 +1383,18 @@ VOID Instruction(INS ins, VOID* v) {
 //         IARG_END
 //     );
 
-     if (INS_IsDirectCall(ins)) {
-	 ADDRINT target_addr = INS_DirectControlFlowTargetAddress(ins); // address of the routine
-     ADDRINT call_addr = INS_Address(ins);
-     call_target_map[call_addr] = target_addr; // save target of call
-	 INS_InsertCall( // count number of times the call is made
-	     ins, IPOINT_BEFORE,
-             (AFUNPTR)docount_call,
-             IARG_FAST_ANALYSIS_CALL,
-             IARG_ADDRINT, call_addr,
-             IARG_END
-	    );
-     }
+    if (INS_IsDirectCall(ins)) {
+        ADDRINT target_addr = INS_DirectControlFlowTargetAddress(ins); // address of the routine
+        ADDRINT call_addr = INS_Address(ins);
+        call_target_map[call_addr] = target_addr; // save target of call
+        INS_InsertCall( // count number of times the call is made
+            ins, IPOINT_BEFORE,
+                (AFUNPTR)docount_call,
+                IARG_FAST_ANALYSIS_CALL,
+                IARG_ADDRINT, call_addr,
+                IARG_END
+        );
+    }
 
 //     if (INS_IsDirectBranch(ins)) { // if ins is a jump command (conditional/unconditional)
 //         ADDRINT target_addr = INS_DirectControlFlowTargetAddress(ins); // address of the jump target (head of loop?)
@@ -1361,29 +1449,49 @@ VOID Instruction(INS ins, VOID* v) {
 /* ===================================================================== */
 
 VOID Fini(INT32 code, VOID* v) {
-	 std::vector<std::pair<ADDRINT, UINT64>> vector_ins(call_count_map.begin(), call_count_map.end()); // call address -> #invocations map
-	 std::sort(vector_ins.begin(), vector_ins.end(),
-            [](const auto & lhs, const auto & rhs)
-            { return lhs.second > rhs.second; }
-	 ); // sort by call invocation number - hottest calls first
+    std::vector<std::pair<ADDRINT, UINT64>> vector_ins(call_count_map.begin(), call_count_map.end()); // call address -> #invocations map
+    std::sort(vector_ins.begin(), vector_ins.end(),
+        [](const auto & lhs, const auto & rhs)
+        { return lhs.second > rhs.second; }
+    ); // sort by call invocation number - hottest calls first
 
-	 std::ofstream myfile;
-         myfile.open("call-count.csv");
+    std::ofstream call_file;
+    call_file.open("call-count.csv");
 
-     map<ADDRINT, UINT64> seen_rtn_map;
-	 for (const auto & item : vector_ins) { // for each call
-         if (seen_rtn_map[call_target_map[item.first]]) {
-             continue;
-         }
-         else {
-             seen_rtn_map[call_target_map[item.first]] = 1;
-         }
-	 	 //0x<call address>, <count invoked>
-         myfile << "0x" << std::hex << item.first << std::dec << ',' << item.second << ',';
-	     // 0x<rtn addr>
-	 	 myfile << "0x" << std::hex << call_target_map[item.first] << std::endl;
-	 }
-	 myfile.close();
+    map<ADDRINT, UINT64> seen_rtn_map;
+    for (const auto & item : vector_ins) { // for each call
+     if (seen_rtn_map[call_target_map[item.first]]) {
+         continue;
+     }
+     else {
+         seen_rtn_map[call_target_map[item.first]] = 1;
+     }
+     //0x<call address>, <count invoked>
+     call_file << "0x" << std::hex << item.first << std::dec << ',' << item.second << ',';
+     // 0x<rtn addr>
+     call_file << "0x" << std::hex << call_target_map[item.first] << std::endl;
+    }
+    call_file.close();
+
+    std::ofstream branch_file;
+    branch_file.open("branch-count.csv");
+    int flag;
+
+    for (const auto & item : bbl_map) { // for each bbl
+        flag = 0;
+        if (taken_map[item.second.bbl_tail] < not_taken_map[item.second.bbl_tail]) {
+            flag = 1;
+        }
+
+        //0x<bbl address>, <bbl tail address>
+        branch_file << "0x" << std::hex << item.first << std::dec << ",0x" << std::hex << item.second.bbl_tail << std::dec << ',';
+        // 0x<taken address> 0x<not taken address> (0 when irrelevant)
+        branch_file << "0x" << std::hex << item.second.next_taken << std::dec << ",0x" << std::hex << item.second.next_not_taken << std::dec << ',';
+        // <hotter next> (0 when taken more, 1 when not taken more)
+        branch_file << flag << std::endl;
+    }
+    branch_file.close();
+
 	std::cout << "Reached FINI!" << std::endl;
 }
 
@@ -1422,7 +1530,8 @@ int main(int argc, char* argv[])
     }
 
     if (prof) {
-	INS_AddInstrumentFunction(Instruction, 0);
+	    INS_AddInstrumentFunction(Instruction, 0);
+        TRACE_AddInstrumentFunction(Trace, 0);
     	PIN_AddFiniFunction(Fini, 0);
 
     	// Never returns
