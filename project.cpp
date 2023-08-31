@@ -46,6 +46,7 @@ KNOB<BOOL>   KnobDoNotCommitTranslatedCode(KNOB_MODE_WRITEONCE,    "pintool",
 
 // OURS - for processing profiling data
 vector<pair<ADDRINT, ADDRINT>> hot_calls;
+vector<pair<ADDRINT, ADDRINT>> hot_calls_to_inline;
 const int NUM_HOT_CALLS = 10;
 const int MIN_CALLS = 100;
 
@@ -316,7 +317,7 @@ int add_new_instr_entry(xed_decoded_inst_t *xedd, ADDRINT pc, unsigned int size)
 
     // debug print new encoded instr:
     if (KnobVerbose) {
-        cerr << "    new instr:";
+        cerr << "[" << dec << num_of_instr_map_entries - 1 << "]    new instr:";
         dump_instr_from_mem((ADDRINT *)instr_map[num_of_instr_map_entries-1].encoded_ins, instr_map[num_of_instr_map_entries-1].new_ins_addr);
     }
 
@@ -328,8 +329,7 @@ int add_new_instr_entry(xed_decoded_inst_t *xedd, ADDRINT pc, unsigned int size)
 /* Our Auxiliaries                                               */
 /* ============================================================= */
 
-bool decode_ins(INS ins, xed_decoded_inst_t* xedd) {
-	ADDRINT ins_addr = INS_Address(ins);
+bool decode_ins(ADDRINT ins_addr, xed_decoded_inst_t* xedd) {
 	xed_error_enum_t xed_code;
 	xed_decoded_inst_zero_set_mode(xedd,&dstate);
 
@@ -356,29 +356,40 @@ bool add_decoded_ins_to_map(ADDRINT ins_addr, xed_decoded_inst_t* xedd) {
 }
 
 
-bool is_hot_call(RTN rtn, ADDRINT call_addr) {
-	return count(hot_calls.begin(), hot_calls.end(), make_pair(call_addr, RTN_Address(rtn)));
+bool is_hot_call_to_inline(ADDRINT call_addr, ADDRINT called_addr) {
+	return count(hot_calls_to_inline.begin(), hot_calls_to_inline.end(), make_pair(call_addr, called_addr));
 }
 
 
-bool is_rtn_inline_valid(RTN rtn, ADDRINT call_addr, map<ADDRINT, xed_decoded_inst_t> translations) {
+bool is_rtn_inline_valid(ADDRINT call_addr, ADDRINT called_addr) {
+	// Find the called rtn
+	RTN rtn = RTN_FindByAddress(called_addr);
+	RTN_Open(rtn);
+	// Check called addr is head of its function
+	if (INS_Address(RTN_InsHead(rtn)) != called_addr) {
+		// cerr << "err: not head of function" << endl;
+		return false;
+	}
+
 	int count_rets = 0;
-	// bool last_seen_is_ret = false;
+	bool last_seen_is_ret = false;
+	bool is_valid = true;
+
 	for (INS ins = RTN_InsHead(rtn); INS_Valid(ins); ins = INS_Next(ins)) {
-		xed_decoded_inst_t xedd = translations[INS_Address(ins)];
-		xed_category_enum_t category_enum = xed_decoded_inst_get_category(&xedd);
-		// last_seen_is_ret = false;
+		last_seen_is_ret = false;
 
 		// Check no access to the stack of the caller, that is - access RBP+<positive_offset>
 		if (INS_MemoryBaseReg(ins) == REG_RBP && INS_MemoryDisplacement(ins) > 0) {
 			// cerr << "err: rbp+pos" << endl;
-			return false;
+			is_valid = false;
+			break;
 		}
 
 		// Check no access to the stack of the caller, that is - access RSP+<negative_offset>
 		if (INS_MemoryBaseReg(ins) == REG_RSP && INS_MemoryDisplacement(ins) < 0) {
 			// cerr << "err: rsp-pos" << endl;
-			return false;
+			is_valid = false;
+			break;
 		}
 
 		// Check no direct jumps outside the function's scope
@@ -386,44 +397,60 @@ bool is_rtn_inline_valid(RTN rtn, ADDRINT call_addr, map<ADDRINT, xed_decoded_in
 			ADDRINT jmp_target = RTN_Address(RTN_FindByAddress(INS_DirectControlFlowTargetAddress(ins)));
 			if (jmp_target != RTN_Address(rtn)) {
 				// cerr << "err: direct jmp ouside scope" << endl;
-				return false;
+				is_valid = false;
+				break;
 			}
 		}
 
 		// Check function doesn't have indirect calls/jmps
 		if (!INS_IsRet(ins) && INS_IsIndirectControlFlow(ins)) {
 			// cerr << "err: indirect" << endl;
-			return false;
+			is_valid = false;
+			break;
 		}
 
 		// Check function is not recursive (no call to itself)
-		if (category_enum == XED_CATEGORY_CALL) {
-			xed_int64_t disp = xed_decoded_inst_get_branch_displacement(&xedd);
-			ADDRINT target_addr = INS_Address(ins) + xed_decoded_inst_get_length (&xedd) + disp;
-			if (target_addr == RTN_Address(rtn)) {// the function calls itself
+		if (INS_IsDirectCall(ins)) {
+			ADDRINT target_addr = INS_DirectControlFlowTargetAddress(ins);
+			if (target_addr == RTN_Address(rtn)) { // the function calls itself
 				// cerr << "err: recursive" << endl;
-				return false;
+				is_valid = false;
+				break;
 			}
 		}
 
 		if (INS_IsRet(ins)) {
 			count_rets += 1;
-			// last_seen_is_ret = true; // MAYBE REMOVE
+			last_seen_is_ret = true; // MAYBE REMOVE
 		}
 	}
 
-	if (count_rets != 1) { //|| !last_seen_is_ret) {
+	if (count_rets != 1 || !last_seen_is_ret) {
 		// cerr << "err: ret problem" << endl;
-		return false;
+		is_valid = false;
 	}
 
 	// cerr << "VALID" << endl;
-	return true;
+	RTN_Close(rtn);
+	return is_valid;
 }
 
 
 
 // ************* OLD AUX
+
+bool add_nop_at_addr(ADDRINT nop_addr) {
+	if (KnobVerbose)
+		cerr << "Adding a NOP command" << endl;
+
+	xed_decoded_inst_t xedd_nop;
+	UINT8 nop_arr[1] = { 0x90 };
+	if (decode_ins(reinterpret_cast<ADDRINT>(&nop_arr), &xedd_nop))
+		return false;
+	if (!add_decoded_ins_to_map(-1, &xedd_nop))
+		return false;
+	return true;
+}
 
 /*************************************************/
 /* chain_all_direct_br_and_call_target_entries() */
@@ -816,19 +843,36 @@ int find_candidate_rtns_for_translation(IMG img)
 	string call_targ_str;
 	ADDRINT hot_call_addr;
 	ADDRINT hot_target_addr;
+	vector<RTN> callers_to_emit;
 
     // go over loop profiling data until we've found 10 different routines
     while(true) { // TODO: change condition?
         getline(prof_file, call_addr_str, ','); // read hot call address
         hot_call_addr = AddrintFromString(call_addr_str);
         getline(prof_file, call_num_str, ','); // read number of times call has been invoked
-        if (stoi(call_num_str) < MIN_CALLS) { // TODO: change condition?
+        if (atoi(call_num_str.c_str()) < MIN_CALLS) { // TODO: change condition?
+			// cerr << "not enough calls";
             break;
         }
-		std::cout << "hot call! addr: " << hot_call_addr << " num invocations: " << call_num_str << std::endl;
+		// cerr << "enough calls" << endl;
         getline(prof_file, call_targ_str); // read target of hot call
 		hot_target_addr = AddrintFromString(call_targ_str);
-		hot_calls.push_back(make_pair(hot_call_addr, hot_target_addr)); // mark call as hot
+
+		if (is_rtn_inline_valid(hot_call_addr, hot_target_addr)) {
+			// hot_calls_to_inline.push_back(make_pair(hot_call_addr, hot_target_addr)); // mark call as hot
+			// callers_to_emit.push_back(RTN_FindByAddress(hot_call_addr));
+			std::cout << "Hot call found at 0x" << hex << hot_call_addr << " to addr 0x" << hot_target_addr << dec << ", num invocations: " << call_num_str << std::endl;
+			int x; 
+			cin >> x; // Get user input from the keyboard
+			if (x != 0) {
+				hot_calls_to_inline.push_back(make_pair(hot_call_addr, hot_target_addr)); // mark call as hot
+				callers_to_emit.push_back(RTN_FindByAddress(hot_call_addr));
+			}
+		}
+		else {
+			// cerr << "illegal" << endl;
+		}
+
         if (!prof_file) { // reached end of file
             break;
         }
@@ -860,7 +904,7 @@ int find_candidate_rtns_for_translation(IMG img)
             for (INS ins = RTN_InsHead(rtn); INS_Valid(ins); ins = INS_Next(ins)) {
                 ADDRINT addr = INS_Address(ins);
                 xed_decoded_inst_t xedd;
-				if (!decode_ins(ins, &xedd))
+				if (!decode_ins(addr, &xedd))
 					break;
                 // Save xed and addr into a map to be used later.
                 local_instrs_map[addr] = xedd;
@@ -879,22 +923,25 @@ int find_candidate_rtns_for_translation(IMG img)
 
     // Go over the local_instrs_map map and add each instruction to the instr_map:
     int rtn_num = 0;
-	vector<ADDRINT> inlined_ret_addr; // TODO: done to avoid repeated inlining, should be removed when inst is ready
-    inlined_ret_addr.clear();
-
+	
     for (map<ADDRINT, xed_decoded_inst_t>::iterator iter = local_instrs_map.begin(); iter != local_instrs_map.end(); iter++) {
 		ADDRINT addr = iter->first;
 		xed_decoded_inst_t xedd = iter->second;
 
 		// Check if we are at a routine header:
 		if (translated_rtn[rtn_num].rtn_addr == addr) {
-			// if (KnobVerbose)
-				cerr << "\nEntered function no. [" << dec << rtn_num << "]: " << RTN_Name(RTN_FindByAddress(addr)) << endl;
-
 			rtn_num++;
+		}
 
-			translated_rtn[rtn_num-1].instr_map_entry = num_of_instr_map_entries;
-			translated_rtn[rtn_num-1].isSafeForReplacedProbe = true;
+		if (find(callers_to_emit.begin(), callers_to_emit.end(), RTN_FindByAddress(addr)) != callers_to_emit.end()) { // do not emit this caller
+			if (translated_rtn[rtn_num-1].rtn_addr == addr) {
+				cerr << "\nEntered function no. [" << dec << rtn_num - 1 << "]: " << RTN_Name(RTN_FindByAddress(addr)) << endl;
+				translated_rtn[rtn_num-1].instr_map_entry = num_of_instr_map_entries;
+				translated_rtn[rtn_num-1].isSafeForReplacedProbe = true;
+			}
+		}
+		else {
+			continue;
 		}
 
 		// Check if this is a direct call instr:
@@ -906,21 +953,17 @@ int find_candidate_rtns_for_translation(IMG img)
 			RTN_Open(rtn);
 
 			// Check Function call is to the beginning of a valid function
-			if (INS_Address(RTN_InsHead(rtn)) == target_addr &&
-				is_hot_call(rtn, addr) && is_rtn_inline_valid(rtn, addr, local_instrs_map)
-				&& find(inlined_ret_addr.begin(), inlined_ret_addr.end(), target_addr) == inlined_ret_addr.end()) {
-				inlined_ret_addr.push_back(target_addr);
-				// replace the call with a single nop
-				// if (!add_nop_at_addr(addr)) {
-				// 	break;
-				// }
-
+			if (is_hot_call_to_inline(addr, target_addr)) {
 				// Do inline
 				cerr << "Start inlining rtn " << RTN_Name(rtn) << " at 0x" << hex << instr_map[num_of_instr_map_entries-1].new_ins_addr << dec << endl;
 
 				for (INS ins_callee = RTN_InsHead(rtn); INS_Valid(ins_callee); ins_callee = INS_Next(ins_callee)) {
 					if (KnobVerbose)
 						cerr << "Original inst: " << INS_Disassemble(ins_callee) << endl;
+
+					// if (!add_nop_at_addr(addr)) { // TODO: just an attempt to insert nops
+					// 	break;
+					// }
 
 					if (INS_IsRet(ins_callee)) {
 						break;
@@ -933,8 +976,7 @@ int find_candidate_rtns_for_translation(IMG img)
 					}
 				}
 
-				if (KnobVerbose)
-					cerr << "End inlining rtn " << RTN_Name(rtn) << endl;
+				cerr << "End inlining rtn " << RTN_Name(rtn) << endl;
 			}
 
 			else {
