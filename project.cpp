@@ -836,7 +836,7 @@ int fix_instructions_displacements()
  }
 
 // OURS
-int load_profiling_data(vector<RTN> callers_to_omit) {
+int load_profiling_data(vector<RTN> callers_to_emit) {
     ifstream call_prof_file;
     ifstream branch_prof_file;
     call_prof_file.open("call-count.csv");
@@ -871,13 +871,13 @@ int load_profiling_data(vector<RTN> callers_to_omit) {
 
         if (is_rtn_inline_valid(hot_call_addr, hot_target_addr)) {
             // hot_calls_to_inline.push_back(make_pair(hot_call_addr, hot_target_addr)); // mark call as hot
-            // callers_to_omit.push_back(RTN_FindByAddress(hot_call_addr));
+            // callers_to_emit.push_back(RTN_FindByAddress(hot_call_addr));
             std::cout << "Hot call found at 0x" << hex << hot_call_addr << " to addr 0x" << hot_target_addr << dec << ", num invocations: " << call_num_str << std::endl;
             int x;
             cin >> x; // Get user input from the keyboard
             if (x != 0) {
                 hot_calls_to_inline.push_back(make_pair(hot_call_addr, hot_target_addr)); // mark call as hot
-                callers_to_omit.push_back(RTN_FindByAddress(hot_call_addr));
+                callers_to_emit.push_back(RTN_FindByAddress(hot_call_addr));
             }
         }
         else {
@@ -920,8 +920,8 @@ int load_profiling_data(vector<RTN> callers_to_omit) {
 // new version
 int find_candidate_rtns_for_translation(IMG img)
 {
-    vector<RTN> callers_to_omit;
-    if(!load_profiling_data(callers_to_omit)) {
+    vector<RTN> callers_to_emit;
+    if(!load_profiling_data(callers_to_emit)) {
         return 0;
     }
 
@@ -970,8 +970,9 @@ int find_candidate_rtns_for_translation(IMG img)
 	if (KnobVerbose)
 		cerr << "Finished translation.\n" << endl;
 
-    // Go over the local_instrs_map map and add each instruction to the instr_map:
+    // Go over the local_instrs_map map and perform inlining (still not changing the global instr_map):
     int rtn_num = 0;
+    vector<pair<ADDRINT, xed_decoded_inst_t>> local_instrs_inlined;
 	
     for (map<ADDRINT, xed_decoded_inst_t>::iterator iter = local_instrs_map.begin(); iter != local_instrs_map.end(); iter++) {
 		ADDRINT addr = iter->first;
@@ -982,7 +983,7 @@ int find_candidate_rtns_for_translation(IMG img)
 			rtn_num++;
 		}
 
-		if (find(callers_to_omit.begin(), callers_to_omit.end(), RTN_FindByAddress(addr)) != callers_to_omit.end()) { // do not emit this caller
+		if (find(callers_to_emit.begin(), callers_to_emit.end(), RTN_FindByAddress(addr)) != callers_to_emit.end()) { // do not emit this caller
 			if (translated_rtn[rtn_num-1].rtn_addr == addr) {
 				cerr << "\nEntered function no. [" << dec << rtn_num - 1 << "]: " << RTN_Name(RTN_FindByAddress(addr)) << endl;
 				translated_rtn[rtn_num-1].instr_map_entry = num_of_instr_map_entries;
@@ -1019,9 +1020,11 @@ int find_candidate_rtns_for_translation(IMG img)
 					}
 					else {
 						xed_decoded_inst_t xedd_callee = local_instrs_map[INS_Address(ins_callee)];
-						if (!add_decoded_ins_to_map(INS_Address(ins_callee), &xedd_callee)) { // failed to encode / add to instr_map
-							break;
-						}
+						// if (!add_decoded_ins_to_map(INS_Address(ins_callee), &xedd_callee)) { // failed to encode / add to instr_map
+						// 	break;
+						// }
+                        local_instrs_inlined.push_back(make_pair(INS_Address(ins_callee), xedd_callee));
+
 					}
 				}
 
@@ -1029,20 +1032,78 @@ int find_candidate_rtns_for_translation(IMG img)
 			}
 
 			else {
-				// Add instr into global instr_map:
-				if (!add_decoded_ins_to_map(addr, &xedd))
-					break;
+				// Add instr into local_instrs_inlined vector:
+				// if (!add_decoded_ins_to_map(addr, &xedd))
+				// 	break;
+                local_instrs_inlined.push_back(make_pair(addr, xedd));
 			}
 
 			RTN_Close(rtn);
 		}
 
 		else {
-			// Add instr into global instr_map:
-			if (!add_decoded_ins_to_map(addr, &xedd))
-				break;
+			// Add instr into local_instrs_inlined vector:
+			// if (!add_decoded_ins_to_map(addr, &xedd))
+			// 	break;
+            local_instrs_inlined.push_back(make_pair(addr, xedd));
 		}
     } // end for map<...
+
+    ADDRINT start_reorder = 0;
+    map<pair<ADDRINT, ADDRINT>, pair<ADDRINT, ADDRINT>> swaps; // key - scope of taken route block, value - scope of non-taken route block
+    // Perform code reorder and add instructions to global instr_map
+    for (auto & iter : local_instrs_inlined) { 
+    // TODO: go over vector using indices instead of foreach loop. 
+    // When needing to reorder, splice the vector and physically swap the location of the taken block instructions with
+    // the not-taken block instructions.
+        if (bbl_map[start_reorder].bbl_tail == iter.first) { // reached a conditional branch we need to revert
+            if (!add_decoded_ins_to_map(iter.first, &iter.second))
+                break;
+
+            bbl_data curr_block = bbl_map[start_reorder];
+            bbl_data taken_block = bbl_map[curr_block.next_taken];
+            bbl_data not_taken_block = bbl_map[curr_block.next_not_taken];
+            // 1. revert conditional branch in the final instruction of the block and commit
+            // 2. commit block in taken route
+            // 3. add jmp
+            // 4. save swap in map
+            swaps[make_pair(curr_block.next_taken, taken_block.bbl_tail)] = make_pair(curr_block.next_not_taken, not_taken_block.bbl_tail);
+            // 5. when reaching the taken route address, instead commit non-taken route and add jmp
+        }
+        // while we haven't reached a block needing reoreder, keep adding instructions to instr_map
+        if (bbl_map.find(iter.first) == bbl_map.end()) { // instruction not start of bbl
+            // Add instr into global instr_map map:
+            if (!add_decoded_ins_to_map(iter.first, &iter.second))
+                break;
+        }
+        else {
+            if (bbl_map[iter.first].hotter_next) { // no need to reorder the block's "children"
+                if (!add_decoded_ins_to_map(iter.first, &iter.second))
+                    break;
+                continue;
+            }
+            else { // need to reorder the block's "children"
+                if (iter.first == bbl_map[iter.first].bbl_tail) { // block has only one instruction
+                    if (!add_decoded_ins_to_map(iter.first, &iter.second))
+                        break;
+
+                    bbl_data curr_block = bbl_map[start_reorder];
+                    bbl_data taken_block = bbl_map[curr_block.next_taken];
+                    bbl_data not_taken_block = bbl_map[curr_block.next_not_taken];
+                    // 1. revert conditional branch in the final instruction of the block and commit
+                    // 2. commit block in taken route
+                    // 3. add jmp
+                    // 4. save swap in map
+                    swaps[make_pair(curr_block.next_taken, taken_block.bbl_tail)] = make_pair(curr_block.next_not_taken, not_taken_block.bbl_tail);
+                    // 5. when reaching the taken route address, instead commit non-taken route and add jmp
+                }
+                else {
+                    start_reorder = iter.first;
+                }
+            }
+        }
+
+    }
 
     return 0;
 }
