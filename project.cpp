@@ -196,7 +196,6 @@ void dump_entire_instr_map()
 	for (int i=0; i < num_of_instr_map_entries; i++) {
 		for (int j=0; j < translated_rtn_num; j++) {
 			if (translated_rtn[j].instr_map_entry == i) {
-
 				RTN rtn = RTN_FindByAddress(translated_rtn[j].rtn_addr);
 
 				if (rtn == RTN_Invalid()) {
@@ -274,7 +273,7 @@ void dump_tc()
 /*************************/
 /* add_new_instr_entry() */
 /*************************/
-int add_new_instr_entry(xed_decoded_inst_t *xedd, ADDRINT pc, unsigned int size)
+int add_new_instr_entry(xed_decoded_inst_t *xedd, ADDRINT pc, unsigned int size, bool is_added_jmp)
 {
 
     // copy orig instr to instr map:
@@ -307,7 +306,13 @@ int add_new_instr_entry(xed_decoded_inst_t *xedd, ADDRINT pc, unsigned int size)
 
     // add a new entry in the instr_map:
 
-    instr_map[num_of_instr_map_entries].orig_ins_addr = pc;
+    if (is_added_jmp) {
+        cerr << "adding a new jmp from 0x" << std::hex << pc << " to 0x" << orig_targ_addr << std::dec << endl;
+        instr_map[num_of_instr_map_entries].orig_ins_addr = 0;
+    }
+    else {
+        instr_map[num_of_instr_map_entries].orig_ins_addr = pc;
+    }
     instr_map[num_of_instr_map_entries].new_ins_addr = (ADDRINT)&tc[tc_cursor];  // set an initial estimated addr in tc
     instr_map[num_of_instr_map_entries].orig_targ_addr = orig_targ_addr;
     instr_map[num_of_instr_map_entries].hasNewTargAddr = false;
@@ -354,9 +359,182 @@ bool decode_ins(ADDRINT ins_addr, xed_decoded_inst_t* xedd) {
 	return true;
 }
 
+bool create_jmp(ADDRINT tail, ADDRINT fallthrough, xed_decoded_inst_t* new_xedd) {
+    cerr << "fallthrough check: 0x" << std::hex << fallthrough << endl;
+    unsigned int max_size = XED_MAX_INSTRUCTION_BYTES;
+	unsigned int new_size = 0;
+    xed_uint8_t enc_buf[XED_MAX_INSTRUCTION_BYTES];		
+    xed_int32_t disp = fallthrough - tail - 5; // 5 should be the jmp instruction's size
+    cerr << "disp check: 0x" << std::hex << disp << endl;
+    xed_encoder_instruction_t enc_instr;
 
-bool add_decoded_ins_to_map(ADDRINT ins_addr, xed_decoded_inst_t* xedd) {
-	int rc = add_new_instr_entry(xedd, ins_addr, xed_decoded_inst_get_length(xedd));
+    xed_inst1(&enc_instr, dstate, 
+            XED_ICLASS_JMP, 64,
+            xed_relbr(disp, 32));
+                            
+    xed_encoder_request_t enc_req;
+
+    xed_encoder_request_zero_set_mode(&enc_req, &dstate);
+    xed_bool_t convert_ok = xed_convert_to_encoder_request(&enc_req, &enc_instr);
+    if (!convert_ok) {
+        cerr << "conversion to encode request failed" << endl;
+        return false;
+    }
+
+    xed_error_enum_t xed_error = xed_encode (&enc_req, enc_buf, max_size, &new_size);
+    if (xed_error != XED_ERROR_NONE) {
+        cerr << "ENCODE ERROR: " << xed_error_enum_t2str(xed_error) << endl;				
+        return false;
+    }
+
+    xed_error_enum_t xed_code = xed_decode(new_xedd, enc_buf, XED_MAX_INSTRUCTION_BYTES);
+    if (xed_code != XED_ERROR_NONE) {
+        cerr << "ERROR: xed decode failed" << endl;
+        return false;
+    }
+
+    char buf[2048];
+    xed_format_context(XED_SYNTAX_INTEL, new_xedd, buf, 2048, tail, 0, 0);
+    cerr << "newly added uncond jump: " << std::hex << tail << " " << buf << endl << endl;
+    return true;
+}
+
+bool revert_branch(ADDRINT tail, ADDRINT fallthrough, xed_decoded_inst_t* xedd, xed_decoded_inst_t* new_xedd) {
+    cerr << "reached revert branch" << endl;
+    char buf2[2048];
+    xed_format_context(XED_SYNTAX_INTEL, xedd, buf2, 2048, tail, 0, 0);
+    cerr << "original branch: " << std::hex << tail << " " << buf2 << endl << endl;
+
+    xed_category_enum_t category_enum = xed_decoded_inst_get_category(xedd);
+
+    if (category_enum != XED_CATEGORY_COND_BR) {
+        cerr << "not a branch!" << endl;
+        return false;
+    }
+
+    xed_iclass_enum_t iclass_enum = xed_decoded_inst_get_iclass(xedd);
+
+    if (iclass_enum == XED_ICLASS_JRCXZ) {
+        cerr << "invalid branch type" << endl;
+        return false;    // do not revert JRCXZ
+    }
+
+    xed_iclass_enum_t retverted_iclass;
+
+    switch (iclass_enum) {
+
+        case XED_ICLASS_JB:
+            retverted_iclass = XED_ICLASS_JNB;		
+            break;
+
+        case XED_ICLASS_JBE:
+            retverted_iclass = XED_ICLASS_JNBE;
+            break;
+
+        case XED_ICLASS_JL:
+            retverted_iclass = XED_ICLASS_JNL;
+            break;
+    
+        case XED_ICLASS_JLE:
+            retverted_iclass = XED_ICLASS_JNLE;
+            break;
+
+        case XED_ICLASS_JNB: 
+            retverted_iclass = XED_ICLASS_JB;
+            break;
+
+        case XED_ICLASS_JNBE: 
+            retverted_iclass = XED_ICLASS_JBE;
+            break;
+
+        case XED_ICLASS_JNL:
+        retverted_iclass = XED_ICLASS_JL;
+            break;
+
+        case XED_ICLASS_JNLE:
+            retverted_iclass = XED_ICLASS_JLE;
+            break;
+
+        case XED_ICLASS_JNO:
+            retverted_iclass = XED_ICLASS_JO;
+            break;
+
+        case XED_ICLASS_JNP: 
+            retverted_iclass = XED_ICLASS_JP;
+            break;
+
+        case XED_ICLASS_JNS: 
+            retverted_iclass = XED_ICLASS_JS;
+            break;
+
+        case XED_ICLASS_JNZ:
+            retverted_iclass = XED_ICLASS_JZ;
+            break;
+
+        case XED_ICLASS_JO:
+            retverted_iclass = XED_ICLASS_JNO;
+            break;
+
+        case XED_ICLASS_JP: 
+            retverted_iclass = XED_ICLASS_JNP;
+            break;
+
+        case XED_ICLASS_JS: 
+            retverted_iclass = XED_ICLASS_JNS;
+            break;
+
+        case XED_ICLASS_JZ:
+            retverted_iclass = XED_ICLASS_JNZ;
+            break;
+
+        default:
+            cerr << "branch type not recognized" << endl;
+            return false;
+    }
+
+    cerr << "just using iclass: " << retverted_iclass << endl;
+
+    // compute new disp
+    xed_uint_t disp_width = xed_decoded_inst_get_branch_displacement_width(xedd);
+    xed_uint_t instr_width = xed_decoded_inst_get_length(xedd);
+    cerr << "disp_width: " << disp_width << endl;
+    cerr << "instr_width: " << instr_width << endl;
+    xed_int32_t disp = fallthrough - tail - instr_width; // the extra 1 is for the instruction itself
+
+    // Converts the decoder request to a valid encoder request:
+    xed_encoder_request_init_from_decode(xedd);
+
+    // set the reverted opcode;
+    xed_encoder_request_set_iclass(xedd, retverted_iclass);
+
+    // set new disp
+    xed_encoder_request_set_branch_displacement(xedd, disp, disp_width);
+
+    xed_uint8_t enc_buf[XED_MAX_INSTRUCTION_BYTES];
+    unsigned int max_size = XED_MAX_INSTRUCTION_BYTES;
+    unsigned int new_size = 0;
+
+    xed_error_enum_t xed_error = xed_encode(xedd, enc_buf, max_size, &new_size);
+    if (xed_error != XED_ERROR_NONE) {
+        cerr << "ENCODE ERROR: " << xed_error_enum_t2str(xed_error) << endl;
+        return false;
+    }
+
+    xed_error_enum_t xed_code = xed_decode(new_xedd, enc_buf, XED_MAX_INSTRUCTION_BYTES);
+    if (xed_code != XED_ERROR_NONE) {
+        cerr << "ERROR: xed decode failed" << endl;
+        return false;
+    }
+
+    char buf[2048];
+    xed_format_context(XED_SYNTAX_INTEL, new_xedd, buf, 2048, tail, 0, 0);
+    cerr << "reverted branch: " << std::hex << tail << " " << buf << endl << endl;
+    return true;
+}
+
+
+bool add_decoded_ins_to_map(ADDRINT ins_addr, xed_decoded_inst_t* xedd, bool is_added_jmp) {
+	int rc = add_new_instr_entry(xedd, ins_addr, xed_decoded_inst_get_length(xedd), is_added_jmp);
 	if (rc < 0) {
 		cerr << "ERROR: failed during instructon translation." << endl;
 		translated_rtn[translated_rtn_num].instr_map_entry = -1;
@@ -458,7 +636,7 @@ bool add_nop_at_addr(ADDRINT nop_addr) {
 	UINT8 nop_arr[1] = { 0x90 };
 	if (decode_ins(reinterpret_cast<ADDRINT>(&nop_arr), &xedd_nop))
 		return false;
-	if (!add_decoded_ins_to_map(-1, &xedd_nop))
+	if (!add_decoded_ins_to_map(-1, &xedd_nop, false))
 		return false;
 	return true;
 }
@@ -540,6 +718,10 @@ int fix_rip_displacement(int instr_map_entry)
     xed_uint_t new_disp_byts = 4;   // set maximal num of byts for now.
 
     unsigned int orig_size = xed_decoded_inst_get_length (&xedd);
+
+    if(!instr_map[instr_map_entry].orig_ins_addr) {
+        cerr << "uh oh" << endl;
+    }
 
     // modify rip displacement. use direct addressing mode:
     new_disp = instr_map[instr_map_entry].orig_ins_addr + disp + orig_size; // xed_decoded_inst_get_length (&xedd_orig);
@@ -836,7 +1018,7 @@ int fix_instructions_displacements()
  }
 
 // OURS
-int load_profiling_data(vector<RTN> callers_to_emit) {
+int load_profiling_data(vector<RTN>& callers_to_emit) {
     ifstream call_prof_file;
     ifstream branch_prof_file;
     call_prof_file.open("call-count.csv");
@@ -924,8 +1106,7 @@ int find_candidate_rtns_for_translation(IMG img)
     if(!load_profiling_data(callers_to_emit)) {
         return 0;
     }
-
-    // TODO: go over bbl_map. For each bbl where !bbl.hotter_next, revert jump
+    cerr << callers_to_emit.size() << endl;
 
     map<ADDRINT, xed_decoded_inst_t> local_instrs_map;
     local_instrs_map.clear();
@@ -970,13 +1151,259 @@ int find_candidate_rtns_for_translation(IMG img)
 	if (KnobVerbose)
 		cerr << "Finished translation.\n" << endl;
 
-    // Go over the local_instrs_map map and perform inlining (still not changing the global instr_map):
-    int rtn_num = 0;
-    vector<pair<ADDRINT, xed_decoded_inst_t>> local_instrs_inlined;
-	
+    vector<pair<ADDRINT, xed_decoded_inst_t>> local_instrs_vec;
     for (map<ADDRINT, xed_decoded_inst_t>::iterator iter = local_instrs_map.begin(); iter != local_instrs_map.end(); iter++) {
+        local_instrs_vec.push_back(make_pair(iter->first, iter->second));
+    }
+
+    // Perform code reorder
+    vector<pair<ADDRINT, xed_decoded_inst_t>> temp_taken;
+    vector<pair<ADDRINT, xed_decoded_inst_t>> temp_non_taken;
+    unsigned int j;
+    int taken_start_index;
+    int taken_end_index;
+    int non_taken_start_index;
+    int non_taken_end_index;
+    int flag;
+
+    int loop_num = 0;
+
+    for (auto const & block : bbl_map) {
+    // When needing to reorder, splice the vector and physically swap the location of the taken block instructions with
+    // the not-taken block instructions.
+        taken_start_index = -1;
+        taken_end_index = -1;
+        non_taken_start_index = -1;
+        non_taken_end_index = -1;
+        if ((find(callers_to_emit.begin(), callers_to_emit.end(), RTN_FindByAddress(block.first)) != callers_to_emit.end()) && 
+            (RTN_FindByAddress(block.first) == RTN_FindByAddress(block.second.next_taken)) && 
+            (RTN_FindByAddress(block.first) == RTN_FindByAddress(block.second.next_not_taken)) &&  
+            !block.second.hotter_next) { // need to reorder
+            bbl_data taken_block = bbl_map[block.second.next_taken];
+            bbl_data not_taken_block = bbl_map[block.second.next_not_taken];
+            if (!(taken_block.bbl_tail && not_taken_block.bbl_tail)) { // some sort of profiling error - skip
+                cout << "skipped problematic swap" << endl;
+                continue;
+            }
+            xed_category_enum_t category_enum_taken = xed_decoded_inst_get_category(&local_instrs_map[taken_block.bbl_tail]);
+            xed_category_enum_t category_enum_not_taken = xed_decoded_inst_get_category(&local_instrs_map[not_taken_block.bbl_tail]);
+		    if (category_enum_taken == XED_CATEGORY_CALL || category_enum_not_taken == XED_CATEGORY_CALL 
+                || category_enum_taken == XED_CATEGORY_RET || category_enum_not_taken == XED_CATEGORY_RET) { // special cases we can't handle (time constraints)
+                cout << "skipped special case (taken/non taken end with call/ret)" << endl;
+                continue;
+            }
+            cout << "reorder spot at 0x" << std::hex << block.first << endl;
+            cout << "taken: 0x" << std::hex << block.second.next_taken << " | not taken: 0x" << block.second.next_not_taken << endl;
+            cout << "non taken tail: 0x" << std::hex << not_taken_block.bbl_tail << endl;
+            // save instructions of non-taken block in temp vector
+            flag = 0;
+
+            for (j = 0; j < local_instrs_vec.size(); j++) {
+                if (!flag) {
+                    if (local_instrs_vec[j].first != block.second.next_not_taken) {
+                        continue;
+                    }
+                    else {
+                        temp_non_taken.push_back(local_instrs_vec[j]);
+                        non_taken_start_index = j;
+                        if (local_instrs_vec[j].first == not_taken_block.bbl_tail) { // check for single-instruction blocks
+                            break;
+                        }
+                        flag = 1;
+                    }
+                }
+                else {
+                    if (local_instrs_vec[j].first == block.second.next_taken) {
+                        break;
+                    }
+                    temp_non_taken.push_back(local_instrs_vec[j]);
+                    if(local_instrs_vec[j].first == not_taken_block.bbl_tail) {
+                        flag = 0;
+                        break;
+                    }
+                }
+            }
+            if (non_taken_start_index < 0 || flag) {
+                cout << "block outside of candidate rtns / profiling error - skip swap (for now)" << endl;
+                temp_non_taken.clear();
+                continue;
+            }
+            non_taken_end_index = j+1;
+            // save instructions of taken block in temp vector
+            flag = 0;
+            for (j = 0; j < local_instrs_vec.size(); j++) {
+                if (!flag) {
+                    if (local_instrs_vec[j].first != block.second.next_taken) {
+                        continue;
+                    }
+                    else {
+                        temp_taken.push_back(local_instrs_vec[j]);
+                        taken_start_index = j;
+                        if (local_instrs_vec[j].first == taken_block.bbl_tail) { // check for single-instruction blocks
+                            break;
+                        }
+                        flag = 1;
+                    }
+                }
+                else {
+                    temp_taken.push_back(local_instrs_vec[j]);
+                    if(local_instrs_vec[j].first == taken_block.bbl_tail) {
+                        flag = 0;
+                        break;
+                    }
+                }
+            }
+            if (taken_start_index < 0 || flag) {
+                cout << "block outside of candidate rtns - skip swap (for now)" << endl;
+                temp_non_taken.clear();
+                temp_taken.clear();
+                continue;
+            }
+            taken_end_index = j+1;
+            cout << "taken deletion start: " << std::dec << taken_start_index << endl;
+            cout << "taken deletion end: " << std::dec << taken_end_index << endl;
+            cout << "non taken deletion start: " << std::dec << non_taken_start_index << endl;
+            cout << "non taken deletion end: " << std:: dec << non_taken_end_index << endl;
+            // performs the reorder:
+            // * revert conditional branch at the end of main block
+            // * switch the taken and non-taken paths from the block
+            // * add unconditional jmp to the end of each block
+            cerr << "main block tail: 0x" << std::hex << block.second.bbl_tail << endl;
+            for (j = local_instrs_vec.size()-1; j >= 0 ; j--) { // change vector from end to beginning so we won't shift the indices
+                if (j == 0) {
+                    break;
+                }
+                if (local_instrs_vec[j].first == block.second.bbl_tail) { // end of main block
+                    // revert conditional branch
+                    xed_decoded_inst_t br_instr;
+                    xed_decoded_inst_zero_set_mode(&br_instr, &dstate);
+                    if (revert_branch(local_instrs_vec[j].first, block.second.next_not_taken, &local_instrs_vec[j].second, &br_instr)) {
+                        local_instrs_vec[j].second = br_instr;
+                        cerr << "branch reverted at : 0x" << std::hex << local_instrs_vec[j].first << endl;
+                    }
+                    // add uncoditional jmp
+                    xed_decoded_inst_t jmp_instr;
+                    xed_decoded_inst_zero_set_mode(&jmp_instr, &dstate);
+                    if (create_jmp(local_instrs_vec[j].first, block.second.next_taken, &jmp_instr)) {
+                        local_instrs_vec.insert(local_instrs_vec.begin()+j+1, make_pair(0, jmp_instr));
+                    }
+                    continue;
+                }
+                if (j == (unsigned)taken_start_index) { // taken block
+                    // add jmp after non taken block
+                    if (not_taken_block.next_not_taken) { // block has fallthrough
+                        xed_decoded_inst_t jmp_instr;
+                        xed_decoded_inst_zero_set_mode(&jmp_instr, &dstate);
+                        if (create_jmp(not_taken_block.bbl_tail, not_taken_block.next_not_taken, &jmp_instr)) {
+                            temp_non_taken.push_back(make_pair(0, jmp_instr));
+                        }
+                    }
+                    // remove instructions of taken block from original vector
+                    local_instrs_vec.erase(local_instrs_vec.begin()+taken_start_index, local_instrs_vec.begin()+taken_end_index);
+                    // insert instructions of non-taken block at index of taken block
+                    local_instrs_vec.insert(local_instrs_vec.begin()+taken_start_index, temp_non_taken.begin(), temp_non_taken.end());
+                    cout << "Replaced taken" << std::endl;
+                    continue;
+                }
+                if (j == (unsigned)non_taken_start_index) { // non taken block
+                    // add jmp after taken block
+                    if (taken_block.next_not_taken) { // block has fallthrough
+                        xed_decoded_inst_t jmp_instr;
+                        xed_decoded_inst_zero_set_mode(&jmp_instr, &dstate);
+                        if (create_jmp(taken_block.bbl_tail, taken_block.next_not_taken, &jmp_instr)) {
+                            temp_taken.push_back(make_pair(0, jmp_instr));
+                        }
+                    }
+                    // remove instructions of non-taken block from original vector
+                    local_instrs_vec.erase(local_instrs_vec.begin()+non_taken_start_index, local_instrs_vec.begin()+non_taken_end_index);
+                    // insert instructions of taken block at index of non-taken block
+                    local_instrs_vec.insert(local_instrs_vec.begin()+non_taken_start_index, temp_taken.begin(), temp_taken.end());
+                    cout << "Replaced non taken" << std::endl;
+                }
+                
+            }
+            // if (non_taken_start_index < taken_start_index) {
+            //     // cout << "non taken before taken" << endl;
+            //     // add jmp after non taken block
+            //     if (not_taken_block.next_not_taken) { // block has fallthrough
+            //         xed_decoded_inst_t jmp_instr;
+            //         xed_decoded_inst_zero_set_mode(&jmp_instr, &dstate);
+            //         if (create_jmp(not_taken_block.bbl_tail, not_taken_block.next_not_taken, &jmp_instr)) {
+            //             temp_non_taken.push_back(make_pair(0, jmp_instr));
+            //         }
+            //     }
+            //     // remove instructions of taken block from original vector
+            //     local_instrs_vec.erase(local_instrs_vec.begin()+taken_start_index, local_instrs_vec.begin()+taken_end_index);
+            //     // insert instructions of non-taken block at index of taken block
+            //     local_instrs_vec.insert(local_instrs_vec.begin()+taken_start_index, temp_non_taken.begin(), temp_non_taken.end());
+            //     // add jmp after taken block
+            //     if (taken_block.next_not_taken) { // block has fallthrough
+            //         xed_decoded_inst_t jmp_instr;
+            //         xed_decoded_inst_zero_set_mode(&jmp_instr, &dstate);
+            //         if (create_jmp(taken_block.bbl_tail, taken_block.next_not_taken, &jmp_instr)) {
+            //             temp_taken.push_back(make_pair(0, jmp_instr));
+            //         }
+            //     }
+            //     // remove instructions of non-taken block from original vector
+            //     local_instrs_vec.erase(local_instrs_vec.begin()+non_taken_start_index, local_instrs_vec.begin()+non_taken_end_index);
+            //     // insert instructions of taken block at index of non-taken block
+            //     local_instrs_vec.insert(local_instrs_vec.begin()+non_taken_start_index, temp_taken.begin(), temp_taken.end());
+            //     cout << "Replaced blocks. The BBL starting in 0x" << std:: hex << block.second.next_taken << " has been moved to index " 
+            //         << std::dec << non_taken_start_index << ". CHECK: 0x" << std:: hex << local_instrs_vec[non_taken_start_index].first << std::endl;
+            // }
+            // else {
+            //     // cout << "taken before non taken" << endl;
+            //     // add jmp after non taken block
+            //     if (not_taken_block.next_not_taken) { // block has fallthrough
+            //         xed_decoded_inst_t jmp_instr;
+            //         xed_decoded_inst_zero_set_mode(&jmp_instr, &dstate);
+            //         if (create_jmp(not_taken_block.bbl_tail, not_taken_block.next_not_taken, &jmp_instr)) {
+            //             temp_non_taken.push_back(make_pair(0, jmp_instr));
+            //         }
+            //     }
+            //     // remove instructions of non-taken block from original vector
+            //     local_instrs_vec.erase(local_instrs_vec.begin()+non_taken_start_index, local_instrs_vec.begin()+non_taken_end_index);
+            //     // insert instructions of taken block at index of non-taken block
+            //     local_instrs_vec.insert(local_instrs_vec.begin()+non_taken_start_index, temp_taken.begin(), temp_taken.end());
+            //     // add jmp after taken block
+            //     if (taken_block.next_not_taken) { // block has fallthrough
+            //         xed_decoded_inst_t jmp_instr;
+            //         xed_decoded_inst_zero_set_mode(&jmp_instr, &dstate);
+            //         if (create_jmp(taken_block.bbl_tail, taken_block.next_not_taken, &jmp_instr)) {
+            //             temp_taken.push_back(make_pair(0, jmp_instr));
+            //         }
+            //     }
+            //     // remove instructions of taken block from original vector
+            //     local_instrs_vec.erase(local_instrs_vec.begin()+taken_start_index, local_instrs_vec.begin()+taken_end_index);
+            //     // insert instructions of non-taken block at index of taken block
+            //     local_instrs_vec.insert(local_instrs_vec.begin()+taken_start_index, temp_non_taken.begin(), temp_non_taken.end());
+            //     cout << "Replaced blocks. The BBL starting in 0x" << std:: hex << block.second.next_not_taken << " has been moved to index " 
+            //         << std::dec << taken_start_index << ". CHECK: 0x" << std:: hex << local_instrs_vec[taken_start_index].first << std::endl;
+            // }
+            
+            temp_non_taken.clear();
+            temp_taken.clear();
+            loop_num++;
+            // if (loop_num == 1)
+            //     break;
+            continue;
+            // break;
+        }
+    }
+
+    int rtn_num = 0;
+    bool is_added_jmp;
+    // Go over local_instrs_vec, perform inlining and add instruction to global instrs_map:
+    for (vector<pair<ADDRINT, xed_decoded_inst_t>>::iterator iter = local_instrs_vec.begin(); iter != local_instrs_vec.end(); iter++) {
 		ADDRINT addr = iter->first;
 		xed_decoded_inst_t xedd = iter->second;
+        is_added_jmp = false;
+
+        // check is instr is a jmp we added
+        if (!addr) {
+            addr = (iter-1)->first;
+            is_added_jmp = true;
+        }
 
 		// Check if we are at a routine header:
 		if (translated_rtn[rtn_num].rtn_addr == addr) {
@@ -986,11 +1413,12 @@ int find_candidate_rtns_for_translation(IMG img)
 		if (find(callers_to_emit.begin(), callers_to_emit.end(), RTN_FindByAddress(addr)) != callers_to_emit.end()) { // do not emit this caller
 			if (translated_rtn[rtn_num-1].rtn_addr == addr) {
 				cerr << "\nEntered function no. [" << dec << rtn_num - 1 << "]: " << RTN_Name(RTN_FindByAddress(addr)) << endl;
-				translated_rtn[rtn_num-1].instr_map_entry = num_of_instr_map_entries;
+                translated_rtn[rtn_num-1].instr_map_entry = num_of_instr_map_entries;
 				translated_rtn[rtn_num-1].isSafeForReplacedProbe = true;
 			}
 		}
 		else {
+            translated_rtn[rtn_num-1].instr_map_entry = -1;
 			continue;
 		}
 
@@ -1020,10 +1448,9 @@ int find_candidate_rtns_for_translation(IMG img)
 					}
 					else {
 						xed_decoded_inst_t xedd_callee = local_instrs_map[INS_Address(ins_callee)];
-						// if (!add_decoded_ins_to_map(INS_Address(ins_callee), &xedd_callee)) { // failed to encode / add to instr_map
-						// 	break;
-						// }
-                        local_instrs_inlined.push_back(make_pair(INS_Address(ins_callee), xedd_callee));
+						if (!add_decoded_ins_to_map(INS_Address(ins_callee), &xedd_callee, false)) { // failed to encode / add to instr_map
+							break;
+						}
 
 					}
 				}
@@ -1032,77 +1459,19 @@ int find_candidate_rtns_for_translation(IMG img)
 			}
 
 			else {
-				// Add instr into local_instrs_inlined vector:
-				// if (!add_decoded_ins_to_map(addr, &xedd))
-				// 	break;
-                local_instrs_inlined.push_back(make_pair(addr, xedd));
+				// Add instr into local_instrs_vec vector:
+                if (!add_decoded_ins_to_map(addr, &xedd, false))
+					break;
 			}
 
 			RTN_Close(rtn);
 		}
 
 		else {
-			// Add instr into local_instrs_inlined vector:
-			// if (!add_decoded_ins_to_map(addr, &xedd))
-			// 	break;
-            local_instrs_inlined.push_back(make_pair(addr, xedd));
+			// Add instr into local_instrs_vec vector:
+			if (!add_decoded_ins_to_map(addr, &xedd, is_added_jmp))
+                break;
 		}
-    } // end for map<...
-
-    ADDRINT start_reorder = 0;
-    map<pair<ADDRINT, ADDRINT>, pair<ADDRINT, ADDRINT>> swaps; // key - scope of taken route block, value - scope of non-taken route block
-    // Perform code reorder and add instructions to global instr_map
-    for (auto & iter : local_instrs_inlined) { 
-    // TODO: go over vector using indices instead of foreach loop. 
-    // When needing to reorder, splice the vector and physically swap the location of the taken block instructions with
-    // the not-taken block instructions.
-        if (bbl_map[start_reorder].bbl_tail == iter.first) { // reached a conditional branch we need to revert
-            if (!add_decoded_ins_to_map(iter.first, &iter.second))
-                break;
-
-            bbl_data curr_block = bbl_map[start_reorder];
-            bbl_data taken_block = bbl_map[curr_block.next_taken];
-            bbl_data not_taken_block = bbl_map[curr_block.next_not_taken];
-            // 1. revert conditional branch in the final instruction of the block and commit
-            // 2. commit block in taken route
-            // 3. add jmp
-            // 4. save swap in map
-            swaps[make_pair(curr_block.next_taken, taken_block.bbl_tail)] = make_pair(curr_block.next_not_taken, not_taken_block.bbl_tail);
-            // 5. when reaching the taken route address, instead commit non-taken route and add jmp
-        }
-        // while we haven't reached a block needing reoreder, keep adding instructions to instr_map
-        if (bbl_map.find(iter.first) == bbl_map.end()) { // instruction not start of bbl
-            // Add instr into global instr_map map:
-            if (!add_decoded_ins_to_map(iter.first, &iter.second))
-                break;
-        }
-        else {
-            if (bbl_map[iter.first].hotter_next) { // no need to reorder the block's "children"
-                if (!add_decoded_ins_to_map(iter.first, &iter.second))
-                    break;
-                continue;
-            }
-            else { // need to reorder the block's "children"
-                if (iter.first == bbl_map[iter.first].bbl_tail) { // block has only one instruction
-                    if (!add_decoded_ins_to_map(iter.first, &iter.second))
-                        break;
-
-                    bbl_data curr_block = bbl_map[start_reorder];
-                    bbl_data taken_block = bbl_map[curr_block.next_taken];
-                    bbl_data not_taken_block = bbl_map[curr_block.next_not_taken];
-                    // 1. revert conditional branch in the final instruction of the block and commit
-                    // 2. commit block in taken route
-                    // 3. add jmp
-                    // 4. save swap in map
-                    swaps[make_pair(curr_block.next_taken, taken_block.bbl_tail)] = make_pair(curr_block.next_not_taken, not_taken_block.bbl_tail);
-                    // 5. when reaching the taken route address, instead commit non-taken route and add jmp
-                }
-                else {
-                    start_reorder = iter.first;
-                }
-            }
-        }
-
     }
 
     return 0;
