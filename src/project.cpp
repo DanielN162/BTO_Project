@@ -48,6 +48,7 @@ KNOB<BOOL>   KnobDoNotCommitTranslatedCode(KNOB_MODE_WRITEONCE,    "pintool",
 // -----------------------------------------------------
 vector<pair<ADDRINT, ADDRINT>> hot_calls;
 vector<pair<ADDRINT, ADDRINT>> hot_calls_to_inline;
+const int MAX_HOT_CALLS = 10;
 const int MIN_CALLS = 100;
 
 struct bbl_data {
@@ -58,6 +59,8 @@ struct bbl_data {
 };
 
 map<ADDRINT, bbl_data> bbl_map; // key is bbl_head
+
+string PROBLEM_CASE = "sendMTFValues";
 // -----------------------------------------------------
 
 // For XED:
@@ -1022,9 +1025,12 @@ int load_profiling_data(vector<RTN>& callers_to_emit) {
         hot_target_addr = AddrintFromString(call_targ_str);
 
         if (is_rtn_inline_valid(hot_call_addr, hot_target_addr)) {
-            if (RTN_Name(RTN_FindByAddress(hot_call_addr)) != "sendMTFValues") { // problematic case we couldn't figure out
+            if (RTN_Name(RTN_FindByAddress(hot_call_addr)) != PROBLEM_CASE) { // problematic case we couldn't figure out
                 hot_calls_to_inline.push_back(make_pair(hot_call_addr, hot_target_addr)); // mark call as hot
                 callers_to_emit.push_back(RTN_FindByAddress(hot_call_addr));
+                if (hot_calls_to_inline.size() == MAX_HOT_CALLS) { // we want to limit the number of inlines
+                    break;
+                }
             }
         }
 
@@ -1137,19 +1143,15 @@ int find_candidate_rtns_for_translation(IMG img)
             continue;
         }
 
-        /*string suffix_to_skip = "@plt"; // reorder in some of these functions caused problems
-        if (rtn_name.length() > suffix_to_skip.length() && 
-            rtn_name.compare(rtn_name.length() - suffix_to_skip.length(), suffix_to_skip.length(), suffix_to_skip)) {
-            continue;
-        }*/
-
-        if ((!block.second.hotter_next &&
+        if (
+            (!block.second.hotter_next && // need to reorder
             RTN_FindByAddress(block.first) == RTN_FindByAddress(block.second.next_taken)) && 
-            (RTN_FindByAddress(block.first) == RTN_FindByAddress(block.second.next_not_taken)) && 
+            (RTN_FindByAddress(block.first) == RTN_FindByAddress(block.second.next_not_taken)) && // main block and the two possible paths in the same 
             find(swaps_performed.begin(), swaps_performed.end(), 
                 make_pair(block.second.next_not_taken, block.second.next_taken)) == swaps_performed.end() &&
             find(swaps_performed.begin(), swaps_performed.end(), 
-                make_pair(block.second.next_taken, block.second.next_not_taken)) == swaps_performed.end()) { // need to reorder
+                make_pair(block.second.next_taken, block.second.next_not_taken)) == swaps_performed.end() // this reorder has not already been performed
+            ) { 
             bbl_data taken_block = bbl_map[block.second.next_taken];
             bbl_data not_taken_block = bbl_map[block.second.next_not_taken];
             if (!(taken_block.bbl_tail && not_taken_block.bbl_tail)) { // some sort of profiling error - skip
@@ -1632,35 +1634,6 @@ VOID docount_branch(INT32 isTaken, ADDRINT branchAddr) {
         not_taken_map[branchAddr]++;
     }
 }
-
-// // count invocations (ignore iterations) and update diffs, for two different types of loops
-// // runs when we EXIT an invocation (prepares vector for the next one)
-// VOID docount_invoked(ADDRINT target_addr) {
-//     invoked_map[target_addr]++;
-//
-//     if (last_map[target_addr] != 0) {
-// 	diff_map[target_addr] += (last_map[target_addr] != curr_map[target_addr]);
-//     }
-//     last_map[target_addr] = curr_map[target_addr];
-//     curr_map[target_addr] = 0;
-// }
-//
-// VOID docount_invoked2(ADDRINT target_addr, INT32 taken) {
-//     if (taken) {
-// 	invoked_map[target_addr]++;
-//         if (last_map[target_addr] != 0) {
-// 	    diff_map[target_addr] += (last_map[target_addr] != curr_map[target_addr]);
-//         }
-//         last_map[target_addr] = curr_map[target_addr];
-//         curr_map[target_addr] = 0;
-//     }
-// }
-//
-// // count instructions in rtn
-// VOID docount(ADDRINT rtn_addr) { rtn_ins_map[rtn_addr]++; }
-//
-// // count calls to rtn
-// VOID docount_rtn(ADDRINT rtn_addr) { rtn_count_map[rtn_addr]++; }
 
 /* ===================================================================== */
 

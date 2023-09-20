@@ -34,4 +34,4 @@ In the optimization phase, We put all instructions in a vector. For each BBl whi
 
 f) How we gather "hot" calls:
 In "call-count.csv", we wrote the number of times each call in the program was executed. If there were multiple calls to the same routine, we only saved the most popular one amongst them in the file. 
-In the optimization phase, we first took all calls which were executed at least a 100 times (we chose this threshold after examining the call counts of different files). Then, we filtered these calls and left out any calls to routines which will be problematic to inline (for example, the routine accesses rbp+<positive offset>). After that we were left with a handful of "hot" calls.
+In the optimization phase, we first took all calls which were executed at least a 100 times (we chose this threshold after examining the call counts of different files). Then, we filtered these calls and left out any calls to routines which will be problematic to inline (for example, the routine accesses rbp+<positive offset>). After that we were left with a handful of "hot" calls, from which we take the 10 hottest ones.
